@@ -58,6 +58,11 @@ function parseDataSource(value: string | undefined): DataSource {
   return 'mock'
 }
 
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem('legal_ai_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 function extractPage(provenance: Record<string, unknown>): number | null {
   const page = provenance.page
   if (typeof page === 'number') return page
@@ -68,7 +73,8 @@ function extractPage(provenance: Record<string, unknown>): number | null {
 
 async function fetchRegister(docId: string, type: RegisterType): Promise<RegisterResponse | null> {
   const response = await fetch(
-    `/api/registers/${encodeURIComponent(docId)}?type=${type}&limit=5`
+    `/api/registers/${encodeURIComponent(docId)}?type=${type}&limit=5`,
+    { headers: authHeaders() }
   )
   if (!response.ok) return null
   return response.json() as Promise<RegisterResponse>
@@ -142,7 +148,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
         const url =
           `/api/graph?namespace=${encodeURIComponent(namespace)}` +
           `&node=${encodeURIComponent(rootNode)}&edge_kinds=entity&depth=${depth}`
-        const response = await fetch(url)
+        const response = await fetch(url, { headers: authHeaders() })
         if (cancelled) return
         if (!response.ok) {
           setPhase('error')

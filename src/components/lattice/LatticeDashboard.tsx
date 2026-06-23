@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ActivityEvent, AgreementItem, ArtifactSummary, WorkspaceData } from '../../types/contracts'
+import { useAuth } from '../../auth/AuthContext'
 import { useNav } from '../../context/NavContext'
 import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
 import { SourceDot } from '../shared/SourceDot'
@@ -38,6 +39,7 @@ function formatRunTime(value: string | null | undefined): string {
 }
 
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
+  const { token } = useAuth()
   const nav = useNav()
   const selectRun = nav?.selectRun
   const [open, setOpen] = useState(false)
@@ -48,7 +50,9 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
     let cancelled = false
     const load = async () => {
       try {
-        const response = await fetch('/api/status')
+        const response = await fetch('/api/status', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
         if (!response.ok) return
         const payload = (await response.json()) as StatusListResponse | StatusRun[]
         const documents = Array.isArray(payload) ? payload : payload.documents ?? []
@@ -72,7 +76,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeId, selectRun])
+  }, [activeId, selectRun, token])
 
   return (
     <div className="relative">
