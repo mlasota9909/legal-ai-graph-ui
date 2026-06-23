@@ -278,6 +278,19 @@ export interface StatusDocument {
   individuals_count?: number | null
   people_mentioned_count?: number | null
   graph_counts?: Record<string, unknown> | null
+  kpi_metrics?: KpiMetrics | null
+}
+
+export interface KpiMetrics {
+  human_queue: number
+  human_queue_data_source: string
+  human_queue_definition?: string | null
+  open_conflicts: number
+  open_conflicts_data_source: string
+  open_conflicts_definition?: string | null
+  jaccard: number | null
+  jaccard_data_source: string
+  jaccard_definition?: string | null
 }
 
 export type GraphEdgeKind = 'entity' | 'provenance' | 'all'

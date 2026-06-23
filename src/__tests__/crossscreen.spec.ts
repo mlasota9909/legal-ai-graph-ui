@@ -46,6 +46,18 @@ test('lattice artifact counts match atrium tab badges', async ({ page }) => {
   const docId = await waitForRealDoc(page)
   expect(REAL_DOC_IDS).toContain(docId)
 
+  // Wait for status poll to update artifact counts (status API takes 1-3s after URL change)
+  // Real documents have > 100 chronology events, so we wait for the first "View all N" to show N > 100
+  await page.waitForFunction(() => {
+    const els = document.querySelectorAll('[class*="cursor-pointer"]')
+    for (const el of els) {
+      const text = el.textContent
+      const match = text?.match(/View all (\d+)/)
+      if (match && parseInt(match[1], 10) > 100) return true
+    }
+    return false
+  }, { timeout: 15000 })
+
   // Grab "View all N →" footer texts from the three list artifact cards
   const viewAllLinks = await page.locator('text=View all').allInnerTexts()
   // Order: Chronology, Entity register, People register, Executive memo, Detailed analysis

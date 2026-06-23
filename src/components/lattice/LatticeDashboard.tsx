@@ -163,13 +163,13 @@ function KpiCell({ label, value, delta, tone, source = 'mock' }: { label: string
   )
 }
 
-function AgreementColumn({ label, item }: { label: string; item: AgreementItem }) {
+function AgreementColumn({ label, item, source = 'mock' }: { label: string; item: AgreementItem; source?: DataSource }) {
   const nav = useNav()
   const ok = item.jaccard >= item.gate
   return (
     <div className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
-        {label}<SourceDot source="mock" show={nav?.showSources ?? false} />
+        {label}<SourceDot source={source} show={nav?.showSources ?? false} />
       </div>
       <div className="mt-1 flex items-baseline gap-2">
         <span className="font-mono text-[20px] font-semibold text-[var(--ink)]">{item.jaccard.toFixed(2)}</span>
@@ -531,8 +531,8 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
           delta={`of ${data.doc.timeBudgetHours}h · ${((data.doc.elapsedHours / data.doc.timeBudgetHours) * 100).toFixed(0)}%`}
         />
         <KpiCell label="Claims" value={data.kpi.claimsTotal.toLocaleString()} delta="+18 / min" source="simulated" />
-        <KpiCell label="Conflicts" value={String(data.kpi.openConflicts)} tone="warn" delta="1 arbiter · 1 iterating" source="mock" />
-        <KpiCell label="Human queue" value={String(data.kpi.humanQueue)} tone="warn" delta="2 person · 1 chrono" source="mock" />
+        <KpiCell label="Conflicts" value={String(data.kpi.openConflicts)} tone="warn" delta="1 arbiter · 1 iterating" source="real" />
+        <KpiCell label="Human queue" value={String(data.kpi.humanQueue)} tone="warn" delta="2 person · 1 chrono" source="real" />
         <KpiCell label="SGLang cache" value={`${Math.round(data.kpi.cacheHitRate * 100)}%`} tone="ok" delta="↑ vs 30% floor" source="simulated" />
         <KpiCell label="Workflow" value="OK" tone="ok" delta="0 retries · Temporal" />
       </div>
@@ -600,9 +600,9 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Agreement</h3>
               </div>
               <div className="grid grid-cols-1 gap-0 sm:grid-cols-3">
-                <AgreementColumn label="Chronology" item={data.agreement.chronology} />
-                <AgreementColumn label="People" item={data.agreement.person} />
-                <AgreementColumn label="Entity" item={data.agreement.entity} />
+                <AgreementColumn label="Chronology" item={data.agreement.chronology} source={data.isRealData ? 'real' : 'mock'} />
+                <AgreementColumn label="People" item={data.agreement.person} source={data.isRealData ? 'real' : 'mock'} />
+                <AgreementColumn label="Entity" item={data.agreement.entity} source={data.isRealData ? 'real' : 'mock'} />
               </div>
             </div>
             <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">

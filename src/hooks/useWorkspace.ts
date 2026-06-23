@@ -61,6 +61,17 @@ interface StatusDocument {
   individuals_count?: number | null
   people_mentioned_count?: number | null
   graph_counts?: GraphCounts | null
+  kpi_metrics?: {
+    human_queue: number
+    human_queue_data_source: string
+    human_queue_definition?: string | null
+    open_conflicts: number
+    open_conflicts_data_source: string
+    open_conflicts_definition?: string | null
+    jaccard: number | null
+    jaccard_data_source: string
+    jaccard_definition?: string | null
+  } | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -204,43 +215,38 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
       ingestedAt: formatIngested(status.upload_ts),
     },
     pipelines: nextPipelines,
-    kpi: claimsTotal != null
-      ? {
-          ...prev.kpi,
-          claimsTotal,
-          claimsAccepted: claimsTotal,
-          claimsDisputed: 0,
-        }
-      : prev.kpi,
+    kpi: {
+      ...prev.kpi,
+      ...(claimsTotal != null ? { claimsTotal, claimsAccepted: claimsTotal, claimsDisputed: 0 } : {}),
+      ...(status.kpi_metrics?.open_conflicts != null ? { openConflicts: status.kpi_metrics.open_conflicts } : {}),
+      ...(status.kpi_metrics?.human_queue != null ? { humanQueue: status.kpi_metrics.human_queue } : {}),
+    },
     agreement: {
       ...prev.agreement,
-      chronology:
-        chronologyCount != null
-          ? {
-              ...prev.agreement.chronology,
-              claims: chronologyCount,
-              accepted: chronologyCount,
-              disputed: 0,
-            }
-          : prev.agreement.chronology,
-      person:
-        individualsCount != null
-          ? {
-              ...prev.agreement.person,
-              claims: individualsCount,
-              accepted: individualsCount,
-              disputed: 0,
-            }
-          : prev.agreement.person,
-      entity:
-        entitiesTotal != null
-          ? {
-              ...prev.agreement.entity,
-              claims: entitiesTotal,
-              accepted: entitiesTotal,
-              disputed: 0,
-            }
-          : prev.agreement.entity,
+      chronology: chronologyCount != null || status.kpi_metrics?.jaccard != null
+        ? {
+            ...(chronologyCount != null
+              ? { ...prev.agreement.chronology, claims: chronologyCount, accepted: chronologyCount, disputed: 0 }
+              : prev.agreement.chronology),
+            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+          }
+        : prev.agreement.chronology,
+      person: individualsCount != null || status.kpi_metrics?.jaccard != null
+        ? {
+            ...(individualsCount != null
+              ? { ...prev.agreement.person, claims: individualsCount, accepted: individualsCount, disputed: 0 }
+              : prev.agreement.person),
+            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+          }
+        : prev.agreement.person,
+      entity: entitiesTotal != null || status.kpi_metrics?.jaccard != null
+        ? {
+            ...(entitiesTotal != null
+              ? { ...prev.agreement.entity, claims: entitiesTotal, accepted: entitiesTotal, disputed: 0 }
+              : prev.agreement.entity),
+            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+          }
+        : prev.agreement.entity,
     },
     artifacts: prev.artifacts.map((artifact) => {
       if (artifact.id === 'chronology' && chronologyCount != null) {
