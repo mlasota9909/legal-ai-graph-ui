@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksListResponse, WorkspaceData } from '../../types/contracts'
+import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksListResponse, StatusDocument, WorkspaceData } from '../../types/contracts'
 import { useNav } from '../../context/NavContext'
 import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
 import { SourceDot } from '../shared/SourceDot'
@@ -22,23 +22,39 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
 
   useEffect(() => {
     let cancelled = false
+    const authHeaders = (): HeadersInit => {
+      const token = localStorage.getItem('legal_ai_token') ?? ''
+      return token ? { Authorization: `Bearer ${token}` } : {}
+    }
     const load = async () => {
       try {
-        const response = await fetch('/api/packs', {
-          headers: { Authorization: `Bearer ${localStorage.getItem('legal_ai_token') ?? ''}` },
-        })
-        if (!response.ok) return
-        const payload = (await response.json()) as PacksListResponse
-        const items = payload.packs ?? []
-        if (!cancelled) setPacks(items)
-        // Auto-select the first pack's first document if none is active yet.
-        // NOTE: current routing uses document_ids[0]; pack_id is not used in the URL.
-        const initialPack = items[0]
-        const initialDocId = initialPack?.document_ids?.[0]
-        if (!cancelled && !autoSelected.current && activeId.startsWith('doc_') && initialDocId) {
-          autoSelected.current = true
-          selectRun?.(initialDocId)
+        let items: PackSummary[] = []
+        const packsResp = await fetch('/api/packs', { headers: authHeaders() })
+        if (packsResp.ok) {
+          const payload = (await packsResp.json()) as PacksListResponse
+          items = payload.packs ?? []
+        } else {
+          // /api/packs not yet deployed — fall back to /api/status
+          const statusResp = await fetch('/api/status', { headers: authHeaders() })
+          if (statusResp.ok) {
+            const payload = (await statusResp.json()) as { documents: StatusDocument[] }
+            items = (payload.documents ?? []).map((doc) => ({
+              pack_id: doc.document_id,
+              name: doc.label ?? doc.document_id,
+              document_ids: [doc.document_id],
+              namespaces: [doc.graph_namespace ?? doc.document_id],
+              counts: {
+                documents: 1,
+                claims_total: 0,
+                entities_total: 0,
+                persons_total: 0,
+                events_total: 0,
+              },
+              data_source: 'real',
+            }))
+          }
         }
+        if (!cancelled) setPacks(items)
       } catch {
         if (!cancelled) setPacks([])
       }
@@ -49,7 +65,18 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeId, selectRun])
+  }, [])
+
+  // Separate effect: auto-navigate to first real doc once packs load and selectRun is available
+  useEffect(() => {
+    if (!autoSelected.current && packs.length > 0 && selectRun && activeId.startsWith('doc_')) {
+      const initialDocId = packs[0]?.document_ids?.[0]
+      if (initialDocId) {
+        autoSelected.current = true
+        selectRun(initialDocId)
+      }
+    }
+  }, [packs, selectRun, activeId])
 
   return (
     <div className="relative">

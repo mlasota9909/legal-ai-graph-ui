@@ -119,8 +119,8 @@ test('document picker switches active document', async ({ page }) => {
   // Open document picker
   await page.locator('button', { hasText: 'Currently showing:' }).click()
 
-  // Wait for dropdown items to appear (the picker renders a grid row per run)
-  const items = page.locator('[class*="grid-cols-[1fr_132px"]')
+  // Wait for dropdown items to appear (packs picker uses grid-cols-[1fr_auto])
+  const items = page.locator('[class*="grid-cols-[1fr_auto"]')
   await items.first().waitFor({ timeout: 10000 })
 
   // Click first dropdown item that is NOT the current document
