@@ -133,7 +133,12 @@ function bumpKpi(kpi: RunKpi, event: ActivityEvent): RunKpi {
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
+  const token = localStorage.getItem('legal_ai_token')
+  const headers: HeadersInit = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  const response = await fetch(url, { headers })
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
   return (await response.json()) as T
 }

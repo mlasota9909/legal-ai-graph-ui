@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 const REAL_DOC_IDS = ['romancath', 'original_royalcomm', 'volume_10', 'tanyaday', 'hopper']
+const DEFAULT_REAL_DOC_ID = 'original_royalcomm'
 const MOCK_DOC_ID = 'doc_2026_05_royalcomm'
 const MOCK_TITLE = 'Royal Commission — Automated Debt Recovery, Volume 1'
 const MOCK_PAGE_COUNT = '4,812'
@@ -14,10 +15,18 @@ async function waitForRealDoc(page: Page): Promise<string> {
     MOCK_DOC_ID,
     { timeout: 15000 }
   )
-  const docId = page.url().split('/runs/')[1]?.split('/')[0] ?? ''
+  const docId = decodeURIComponent(page.url().split('/runs/')[1]?.split('/')[0] ?? '')
+  if (docId !== DEFAULT_REAL_DOC_ID) {
+    await page.goto(`/runs/${DEFAULT_REAL_DOC_ID}`)
+    await page.waitForFunction(
+      (targetId: string) => window.location.pathname === `/runs/${targetId}`,
+      DEFAULT_REAL_DOC_ID,
+      { timeout: 15000 }
+    )
+  }
   // Allow one status-poll cycle for data to settle
   await page.waitForTimeout(2000)
-  return decodeURIComponent(docId)
+  return DEFAULT_REAL_DOC_ID
 }
 
 function parseCount(text: string | null | undefined): number {
@@ -25,6 +34,12 @@ function parseCount(text: string | null | undefined): number {
   const m = text.replace(/,/g, '').match(/\d+/)
   return m ? parseInt(m[0], 10) : -1
 }
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('legal_ai_token', 'playwright')
+  })
+})
 
 test('lattice artifact counts match atrium tab badges', async ({ page }) => {
   await page.goto('/')
@@ -232,3 +247,40 @@ test('atrium graph button navigates to evidence view', async ({ page }) => {
   await expect(backBtn).toBeVisible()
 })
 
+test('evidence panel shows depth selector buttons', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  await page.goto(`/runs/${docId}/evidence`)
+  await page.waitForTimeout(4000)
+
+  const hopBtn = page.locator('button', { hasText: /hop/i }).first()
+  await expect(hopBtn).toBeVisible()
+})
+
+test('evidence back button returns to monitor', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  await page.goto(`/runs/${docId}/evidence`)
+  await page.waitForTimeout(2000)
+
+  await page.locator('button', { hasText: /Back/i }).click()
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+})
+
+test('evidence panel requests api/graph endpoint', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  let captured = false
+  await page.route('**/api/graph**', (route) => {
+    captured = true
+    route.continue()
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+  await page.waitForTimeout(5000)
+
+  expect(captured).toBe(true)
+})

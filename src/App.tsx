@@ -1,10 +1,14 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { NavContext } from './context/NavContext'
 import { useWorkspace } from './hooks/useWorkspace'
 import { AtriumDashboard } from './components/atrium/AtriumDashboard'
 import { LatticeDashboard } from './components/lattice/LatticeDashboard'
 import { EvidencePanel } from './components/evidence/EvidencePanel'
+import { AuthProvider } from './auth/AuthContext'
+import { ProtectedRoute } from './auth/ProtectedRoute'
+import { Login } from './pages/Login'
 
-function App() {
+function AppRoutes() {
   const workspace = useWorkspace()
 
   const centre =
@@ -36,6 +40,26 @@ function App() {
     >
       {centre}
     </NavContext.Provider>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <AppRoutes />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
 
