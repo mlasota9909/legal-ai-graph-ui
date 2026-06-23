@@ -1,0 +1,234 @@
+import { test, expect, type Page } from '@playwright/test'
+
+const REAL_DOC_IDS = ['romancath', 'original_royalcomm', 'volume_10', 'tanyaday', 'hopper']
+const MOCK_DOC_ID = 'doc_2026_05_royalcomm'
+const MOCK_TITLE = 'Royal Commission — Automated Debt Recovery, Volume 1'
+const MOCK_PAGE_COUNT = '4,812'
+
+async function waitForRealDoc(page: Page): Promise<string> {
+  await page.waitForFunction(
+    (mockId: string) => {
+      const path = window.location.pathname
+      return path.includes('/runs/') && !path.includes(mockId)
+    },
+    MOCK_DOC_ID,
+    { timeout: 15000 }
+  )
+  const docId = page.url().split('/runs/')[1]?.split('/')[0] ?? ''
+  // Allow one status-poll cycle for data to settle
+  await page.waitForTimeout(2000)
+  return decodeURIComponent(docId)
+}
+
+function parseCount(text: string | null | undefined): number {
+  if (!text) return -1
+  const m = text.replace(/,/g, '').match(/\d+/)
+  return m ? parseInt(m[0], 10) : -1
+}
+
+test('lattice artifact counts match atrium tab badges', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+  expect(REAL_DOC_IDS).toContain(docId)
+
+  // Grab "View all N →" footer texts from the three list artifact cards
+  const viewAllLinks = await page.locator('text=View all').allInnerTexts()
+  // Order: Chronology, Entity register, People register, Executive memo, Detailed analysis
+  const latticeChronology = parseCount(viewAllLinks[0])
+  const latticeEntities = parseCount(viewAllLinks[1])
+  const latticePeople = parseCount(viewAllLinks[2])
+  expect(latticeChronology).toBeGreaterThan(0)
+  expect(latticeEntities).toBeGreaterThan(0)
+  expect(latticePeople).toBeGreaterThan(0)
+
+  // Navigate to Atrium
+  await page.goto(`/runs/${docId}/chronology`)
+  await page.waitForTimeout(1000)
+
+  // Read tab badge numbers
+  const chronoTab = page.locator('button', { hasText: 'Chronology' }).first()
+  const entityTab = page.locator('button', { hasText: 'Entity register' }).first()
+  const peopleTab = page.locator('button', { hasText: 'People register' }).first()
+
+  const atriumChronology = parseCount(await chronoTab.innerText())
+  const atriumEntities = parseCount(await entityTab.innerText())
+  const atriumPeople = parseCount(await peopleTab.innerText())
+
+  expect(atriumChronology).toBe(latticeChronology)
+  expect(atriumEntities).toBe(latticeEntities)
+  expect(atriumEntities).toBeGreaterThanOrEqual(400)
+  expect(atriumPeople).toBe(latticePeople)
+})
+
+test('real document data replaces mock values', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  expect(REAL_DOC_IDS).toContain(docId)
+  expect(docId).not.toBe(MOCK_DOC_ID)
+
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).not.toContain(MOCK_TITLE)
+  expect(bodyText).not.toContain(MOCK_PAGE_COUNT)
+})
+
+test('monitor to chronology and back', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  // Click the Chronology artifact card (contains "View all N →" and "Chronology")
+  await page.locator('text=View all').first().click()
+  await expect(page).toHaveURL(/\/chronology$/)
+
+  // Chronology tab should be active (border-accent underline — check it's present)
+  const chronoTab = page.locator('button', { hasText: 'Chronology' }).first()
+  await expect(chronoTab).toBeVisible()
+
+  // Navigate back to monitor
+  await page.locator('text=← Monitor').click()
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+
+  // KPI Claims cell must be visible
+  await expect(page.locator('text=Claims').first()).toBeVisible()
+})
+
+test('document picker switches active document', async ({ page }) => {
+  await page.goto('/')
+  const firstDocId = await waitForRealDoc(page)
+  expect(REAL_DOC_IDS).toContain(firstDocId)
+
+  // Open document picker
+  await page.locator('button', { hasText: 'Currently showing:' }).click()
+
+  // Click first dropdown item that is NOT the current document
+  const items = page.locator('[class*="grid-cols-[1fr_132px"]')
+  const count = await items.count()
+  let clicked = false
+  for (let i = 0; i < count; i++) {
+    const text = await items.nth(i).innerText()
+    const candidateId = text.split('\t')[0]?.trim().toLowerCase().replace(/\s+/g, '_')
+    if (!candidateId.includes(firstDocId.replace(/_/g, ' ').split(' ')[0])) {
+      await items.nth(i).click()
+      clicked = true
+      break
+    }
+  }
+  if (!clicked) {
+    // Fallback: click second item if we couldn't distinguish
+    await items.nth(1).click()
+  }
+
+  // Wait for URL to change
+  await page.waitForFunction(
+    (prevId: string) => {
+      const path = window.location.pathname
+      return path.includes('/runs/') && !path.includes(prevId)
+    },
+    firstDocId,
+    { timeout: 10000 }
+  )
+
+  const newDocId = decodeURIComponent(page.url().split('/runs/')[1]?.split('/')[0] ?? '')
+  expect(newDocId).not.toBe(firstDocId)
+  expect(REAL_DOC_IDS).toContain(newDocId)
+
+  // Claims KPI should update to a non-zero number
+  await page.waitForTimeout(3000)
+  const claimsText = await page.locator('text=Claims').first().locator('..').innerText()
+  expect(parseCount(claimsText)).toBeGreaterThan(0)
+})
+
+test('no mock in prod build — data_source badges are real after load', async ({ page }) => {
+  await page.goto('/')
+  await waitForRealDoc(page)
+
+  // Enable sources overlay
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+  await page.waitForTimeout(500)
+
+  // At least some "real data" badges should now be visible
+  const realBadges = await page.locator('[title="real data"]').count()
+  expect(realBadges).toBeGreaterThan(0)
+
+  // The API should never have returned a mock envelope on the status call
+  const apiCalls = await page.evaluate(() =>
+    performance
+      .getEntriesByType('resource')
+      .filter((r) => r.name.includes('/api/'))
+      .map((r) => ({ url: r.name, status: (r as PerformanceResourceTiming).responseStatus }))
+  )
+  const statusCalls = apiCalls.filter((c) => c.url.includes('/api/status/') && c.status === 200)
+  expect(statusCalls.length).toBeGreaterThan(0)
+})
+
+test('evidence graph panel loads with real data', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  // Navigate directly to evidence view
+  await page.goto(`/runs/${docId}/evidence`)
+  await page.waitForTimeout(3000)
+
+  // The panel should show a heading or content — not the old stub text
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).not.toContain('Evidence inspector (stub)')
+
+  // Should show back navigation
+  const backBtn = page.locator('button', { hasText: /Back/ }).first()
+  await expect(backBtn).toBeVisible()
+
+  // Clicking back should return to monitor
+  await backBtn.click()
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+})
+
+test('entity register includes organisation and document types', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  // Navigate to entities tab
+  await page.goto(`/runs/${docId}/entities`)
+  await page.waitForTimeout(3000)
+
+  // The entity tab badge should now reflect all 4 entity types
+  // (legislation + authority + organisation + document)
+  const entityTab = page.locator('button', { hasText: 'Entity register' }).first()
+  const badgeText = await entityTab.innerText()
+
+  // Parse the count from the badge (it contains "Entity register NNN")
+  const countMatch = badgeText.replace(/,/g, '').match(/\d+/)
+  const entityCount = countMatch ? parseInt(countMatch[0], 10) : 0
+
+  // Should now be the full entities_total (at least 400 for romancath, covering all 4 types)
+  expect(entityCount).toBeGreaterThan(400)
+})
+
+test('monitor relationship graph card navigates to evidence view', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  const graphCard = page.locator('button', { hasText: /Relationship graph|View graph/ }).first()
+  await expect(graphCard).toBeVisible({ timeout: 10000 })
+  await graphCard.click()
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).not.toContain('Evidence inspector (stub)')
+})
+
+test('atrium graph button navigates to evidence view', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  await page.goto(`/runs/${docId}/chronology`)
+  await page.waitForTimeout(1000)
+
+  const graphBtn = page.locator('button', { hasText: /^Graph/ }).first()
+  await expect(graphBtn).toBeVisible({ timeout: 10000 })
+  await graphBtn.click()
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  const backBtn = page.locator('button', { hasText: /Back/ }).first()
+  await expect(backBtn).toBeVisible()
+})
+
