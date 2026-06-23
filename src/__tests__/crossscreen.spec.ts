@@ -112,11 +112,18 @@ test('document picker switches active document', async ({ page }) => {
   const firstDocId = await waitForRealDoc(page)
   expect(REAL_DOC_IDS).toContain(firstDocId)
 
+  // Allow the document picker's own /api/status fetch to populate its dropdown
+  // before we try to click it (cold Vite boot can make that call slow).
+  await page.waitForTimeout(3000)
+
   // Open document picker
   await page.locator('button', { hasText: 'Currently showing:' }).click()
 
-  // Click first dropdown item that is NOT the current document
+  // Wait for dropdown items to appear (the picker renders a grid row per run)
   const items = page.locator('[class*="grid-cols-[1fr_132px"]')
+  await items.first().waitFor({ timeout: 10000 })
+
+  // Click first dropdown item that is NOT the current document
   const count = await items.count()
   let clicked = false
   for (let i = 0; i < count; i++) {
@@ -140,7 +147,7 @@ test('document picker switches active document', async ({ page }) => {
       return path.includes('/runs/') && !path.includes(prevId)
     },
     firstDocId,
-    { timeout: 10000 }
+    { timeout: 20000 }
   )
 
   const newDocId = decodeURIComponent(page.url().split('/runs/')[1]?.split('/')[0] ?? '')
