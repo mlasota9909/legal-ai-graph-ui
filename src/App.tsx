@@ -4,6 +4,7 @@ import { useWorkspace } from './hooks/useWorkspace'
 import { AtriumDashboard } from './components/atrium/AtriumDashboard'
 import { LatticeDashboard } from './components/lattice/LatticeDashboard'
 import { EvidencePanel } from './components/evidence/EvidencePanel'
+import { AskPanel } from './components/query/AskPanel'
 import { AuthProvider } from './auth/AuthContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { Login } from './pages/Login'
@@ -19,6 +20,12 @@ function AppRoutes() {
         docId={workspace.docId}
         namespace={workspace.namespace}
         claimId={workspace.highlight}
+        onBack={() => workspace.go('monitor')}
+      />
+    ) : workspace.view === 'ask' ? (
+      <AskPanel
+        docId={workspace.docId}
+        namespace={workspace.namespace}
         onBack={() => workspace.go('monitor')}
       />
     ) : (

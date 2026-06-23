@@ -23,6 +23,7 @@ const VIEW_SEGMENTS: Record<string, ArtifactView> = {
   exec: 'exec',
   detailed: 'detailed',
   evidence: 'evidence',
+  ask: 'ask',
 }
 
 interface RouteState {

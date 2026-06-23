@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ActivityEvent, AgreementItem, ArtifactSummary, WorkspaceData } from '../../types/contracts'
-import { useAuth } from '../../auth/AuthContext'
+import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksListResponse, WorkspaceData } from '../../types/contracts'
 import { useNav } from '../../context/NavContext'
 import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
 import { SourceDot } from '../shared/SourceDot'
@@ -14,60 +13,34 @@ const ACTIVITY_FILTERS = ['all', 'conflicts', 'decisions', 'claims', 'entity', '
 
 type ActivityFilter = (typeof ACTIVITY_FILTERS)[number]
 
-interface StatusRun {
-  document_id: string
-  label?: string | null
-  pipeline_stage?: string | null
-  upload_ts?: string | null
-  chronology_status?: string | null
-}
-
-interface StatusListResponse {
-  documents?: StatusRun[]
-}
-
-function formatRunTime(value: string | null | undefined): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString([], {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
-  const { token } = useAuth()
   const nav = useNav()
   const selectRun = nav?.selectRun
   const [open, setOpen] = useState(false)
-  const [runs, setRuns] = useState<StatusRun[]>([])
+  const [packs, setPacks] = useState<PackSummary[]>([])
   const autoSelected = useRef(false)
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const response = await fetch('/api/status', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        const response = await fetch('/api/packs', {
+          headers: { Authorization: `Bearer ${localStorage.getItem('legal_ai_token') ?? ''}` },
         })
         if (!response.ok) return
-        const payload = (await response.json()) as StatusListResponse | StatusRun[]
-        const documents = Array.isArray(payload) ? payload : payload.documents ?? []
-        const recent = documents
-          .filter((run) => run.document_id)
-          .sort((a, b) => Date.parse(b.upload_ts ?? '') - Date.parse(a.upload_ts ?? ''))
-          .slice(0, 10)
-        if (!cancelled) setRuns(recent)
-        const initialRun = recent.find((run) => run.chronology_status === 'completed') ?? recent[0]
-        if (!cancelled && !autoSelected.current && activeId.startsWith('doc_') && initialRun) {
+        const payload = (await response.json()) as PacksListResponse
+        const items = payload.packs ?? []
+        if (!cancelled) setPacks(items)
+        // Auto-select the first pack's first document if none is active yet.
+        // NOTE: current routing uses document_ids[0]; pack_id is not used in the URL.
+        const initialPack = items[0]
+        const initialDocId = initialPack?.document_ids?.[0]
+        if (!cancelled && !autoSelected.current && activeId.startsWith('doc_') && initialDocId) {
           autoSelected.current = true
-          selectRun?.(initialRun.document_id)
+          selectRun?.(initialDocId)
         }
       } catch {
-        if (!cancelled) setRuns([])
+        if (!cancelled) setPacks([])
       }
     }
     void load()
@@ -76,7 +49,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeId, selectRun, token])
+  }, [activeId, selectRun])
 
   return (
     <div className="relative">
@@ -88,25 +61,38 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
         Currently showing: {title} ▼
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-2 w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] shadow-lg">
-          {runs.map((run) => (
-            <button
-              type="button"
-              key={run.document_id}
-              onClick={() => {
-                selectRun?.(run.document_id)
-                setOpen(false)
-              }}
-              className={`grid w-full grid-cols-[1fr_132px_112px] gap-3 border-b border-[var(--rule-soft)] px-3 py-2 text-left text-[11.5px] last:border-b-0 hover:bg-[var(--panel-dim)] ${
-                run.document_id === activeId ? 'bg-[var(--accent-soft)]' : ''
-              }`}
-            >
-              <span className="truncate font-medium text-[var(--ink)]">{run.label ?? run.document_id}</span>
-              <span className="truncate font-mono text-[var(--ink-2)]">{run.pipeline_stage ?? '—'}</span>
-              <span className="font-mono text-[var(--ink-3)]">{formatRunTime(run.upload_ts)}</span>
-            </button>
-          ))}
-          {runs.length === 0 && <div className="px-3 py-2 text-[11.5px] text-[var(--ink-3)]">No live runs found.</div>}
+        <div className="absolute left-0 top-full z-20 mt-2 w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] shadow-lg">
+          {packs.map((pack) => {
+            const docId = pack.document_ids[0]
+            return (
+              <button
+                type="button"
+                key={pack.pack_id}
+                onClick={() => {
+                  if (docId) {
+                    selectRun?.(docId)
+                    setOpen(false)
+                  }
+                }}
+                className={`grid w-full grid-cols-[1fr_auto] gap-3 border-b border-[var(--rule-soft)] px-3 py-2 text-left last:border-b-0 hover:bg-[var(--panel-dim)] ${
+                  docId === activeId ? 'bg-[var(--accent-soft)]' : ''
+                }`}
+              >
+                <div className="min-w-0">
+                  <span className="block truncate text-[12px] font-medium text-[var(--ink)]">
+                    {pack.name ?? pack.pack_id}
+                  </span>
+                  <span className="font-mono text-[10.5px] text-[var(--ink-3)]">
+                    {pack.counts.claims_total.toLocaleString()} claims
+                  </span>
+                </div>
+                <span className="self-center font-mono text-[10px] text-[var(--ink-3)]">
+                  {pack.counts.documents} doc{pack.counts.documents !== 1 ? 's' : ''}
+                </span>
+              </button>
+            )
+          })}
+          {packs.length === 0 && <div className="px-3 py-2 text-[11.5px] text-[var(--ink-3)]">No packs found.</div>}
         </div>
       )}
     </div>
@@ -633,6 +619,22 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
             </div>
             <div className="flex items-center justify-end border-t border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2 font-mono text-[10px] text-[var(--accent)] hover:underline">
               View graph →
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => nav?.go('ask')}
+            className="flex flex-col justify-between overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] text-left hover:bg-[var(--bg)]"
+          >
+            <div className="flex-1 p-4">
+              <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-3)]">Ask</div>
+              <div className="mt-2 font-serif text-[17px] font-medium text-[var(--ink)]">Ask the evidence</div>
+              <div className="mt-2 text-[11.5px] leading-relaxed text-[var(--ink-2)]">
+                Natural-language queries grounded in the evidence graph
+              </div>
+            </div>
+            <div className="flex items-center justify-end border-t border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2 font-mono text-[10px] text-[var(--accent)] hover:underline">
+              Ask a question →
             </div>
           </button>
         </div>

@@ -6,6 +6,7 @@ export type ArtifactView =
   | 'exec'
   | 'detailed'
   | 'evidence'
+  | 'ask'
 
 export type ArtifactType =
   | 'chronology'
@@ -175,6 +176,108 @@ export interface RegisterResponse {
   rows: RegisterRow[]
   graph_counts?: Record<string, unknown>
   data_source?: string
+}
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface LoginResponse {
+  token: string
+}
+
+export interface AuthValidateResponse {
+  valid: true
+  sub: string
+}
+
+export interface PackCounts {
+  documents: number
+  claims_total: number
+  entities_total: number
+  persons_total: number
+  events_total: number
+}
+
+export interface PackSummary {
+  pack_id: string
+  name?: string | null
+  document_ids: string[]
+  namespaces: string[]
+  counts: PackCounts
+  data_source: string
+}
+
+export interface PackDetail {
+  pack_id: string
+  name?: string | null
+  document_ids: string[]
+  namespaces: string[]
+  counts: PackCounts
+  documents: StatusDocument[]
+  data_source: string
+}
+
+export interface PacksListResponse {
+  packs: PackSummary[]
+  data_source: string
+}
+
+export interface MatterSummary {
+  id: string
+  namespace: string
+  title?: string | null
+  doc_count: number
+  data_source: string
+}
+
+export interface MattersListResponse {
+  matters: MatterSummary[]
+  data_source: string
+}
+
+export interface QueryRequest {
+  question: string
+  namespace?: string | null
+  namespaces?: string[] | null
+  pack_id?: string | null
+}
+
+export interface QueryCitation {
+  evidence_id: string
+  result_id: string
+  source: string
+  node_id?: string | null
+  chunk_id?: string | null
+  page?: number | null
+  namespace?: string | null
+}
+
+export interface QueryResponse {
+  answer: string
+  citations: QueryCitation[]
+  supporting_subgraph: Record<string, unknown>
+  validation_status: string
+  confidence: number
+  data_source: string
+  retrieval_debug: Record<string, unknown>
+}
+
+export interface StatusDocument {
+  document_id: string
+  graph_namespace?: string | null
+  label?: string | null
+  pipeline_stage?: string | null
+  upload_ts?: string | null
+  page_count?: number | null
+  chunks_completed?: number | null
+  total_chunks?: number | null
+  chronology_status?: string | null
+  chronology_event_count?: number | null
+  individuals_count?: number | null
+  people_mentioned_count?: number | null
+  graph_counts?: Record<string, unknown> | null
 }
 
 export type GraphEdgeKind = 'entity' | 'provenance' | 'all'
