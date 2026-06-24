@@ -21,6 +21,348 @@
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
   <script src="data.js"></script>
+  <script>
+    // Operator API shim — maps legacy coordination paths to the real graph API.
+    (function () {
+      const nativeFetch = window.fetch.bind(window);
+
+      function apiAuthHeaders(withJson) {
+        const headers = {};
+        if (withJson) headers['Content-Type'] = 'application/json';
+        const token = localStorage.getItem('legal_ai_token');
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        return headers;
+      }
+      window.apiAuthHeaders = apiAuthHeaders;
+
+      function registerRowsToEvents(data) {
+        const rows = (data && data.rows) ? data.rows : [];
+        return rows.map(function (row) {
+          const e = row.entity || {};
+          const text = e.event_description || e.description || e.label || e.name || row.id;
+          return {
+            id: row.id,
+            text: text,
+            title: text,
+            event_date: e.event_date_iso || e.event_date || '',
+            date: e.event_date_iso || e.event_date || '',
+            validation_status: e.validation_status || 'real',
+            salience_score: row.salience_score,
+            provenance: row.provenance || [],
+            data_source: 'real',
+            conf: row.salience_score,
+          };
+        });
+      }
+
+      function registerRowsToPeople(data) {
+        const rows = (data && data.rows) ? data.rows : [];
+        return rows.map(function (row) {
+          const e = row.entity || {};
+          return {
+            id: row.id,
+            name: e.name || e.display_name || e.label || row.id,
+            role: e.role || '',
+            validation_status: e.validation_status || 'real',
+            salience_score: row.salience_score,
+            provenance: row.provenance || [],
+            data_source: 'real',
+            conf: row.salience_score,
+          };
+        });
+      }
+
+      function registerRowsToEntities(data) {
+        const rows = (data && data.rows) ? data.rows : [];
+        return rows.map(function (row) {
+          const e = row.entity || {};
+          const name = e.name || e.display_name || e.label || e.title || row.id;
+          return {
+            id: row.id,
+            name: name,
+            canonical: name,
+            type: row.type || 'entity',
+            validation_status: e.validation_status || 'real',
+            salience_score: row.salience_score,
+            provenance: row.provenance || [],
+            data_source: 'real',
+            conf: row.salience_score,
+          };
+        });
+      }
+
+      window.registerRowsToEvents = registerRowsToEvents;
+      window.registerRowsToPeople = registerRowsToPeople;
+      window.registerRowsToEntities = registerRowsToEntities;
+
+      function jsonResponse(obj, status) {
+        return new Response(JSON.stringify(obj), {
+          status: status || 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      function authInit(input, init) {
+        init = init || {};
+        const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+        Object.entries(apiAuthHeaders()).forEach(function (pair) {
+          if (!headers.has(pair[0])) headers.set(pair[0], pair[1]);
+        });
+        return Object.assign({}, init, { headers: headers });
+      }
+
+      function mapStageStatus(value) {
+        if (!value) return 'queued';
+        if (value === 'completed') return 'done';
+        if (value === 'running' || value === 'in_progress') return 'running';
+        return value;
+      }
+
+      function buildPipeline(status) {
+        return [
+          { id: 'ingest', name: 'Document ingest', status: mapStageStatus(status.pipeline_stage), pct: status.pipeline_stage === 'completed' ? 100 : 0 },
+          { id: 'chronology', name: 'Chronology', status: mapStageStatus(status.chronology_status), pct: status.chronology_status === 'completed' ? 100 : 0 },
+          { id: 'people', name: 'People', status: mapStageStatus(status.people_mentioned_status), pct: status.people_mentioned_status === 'completed' ? 100 : 0 },
+          { id: 'entities', name: 'Entities', status: mapStageStatus(status.individuals_status), pct: status.individuals_status === 'completed' ? 100 : 0 },
+        ];
+      }
+
+      function buildOperatorPayload(status, allDocs) {
+        const gc = status.graph_counts || {};
+        const eventsTotal = gc.events_total != null ? gc.events_total : (status.chronology_event_count || 0);
+        const peopleTotal = gc.persons_total != null ? gc.persons_total : (status.people_mentioned_count || 0);
+        const entitiesTotal = gc.entities_total != null ? gc.entities_total : 0;
+        return {
+          doc: {
+            id: status.document_id,
+            title: status.label || status.document_id,
+            status: status.pipeline_stage || 'unknown',
+            pages: status.page_count || gc.page_count || 0,
+            docType: 'document',
+            uploadTs: status.upload_ts,
+          },
+          claims: {
+            total: gc.claims_total || 0,
+            chronology: eventsTotal,
+            people: peopleTotal,
+            entities: entitiesTotal,
+            external_refs: gc.external_sources || gc.evidenced_by_external_edges || 0,
+            internal_refs: 0,
+            memo: 0,
+          },
+          claim_breakdown: {
+            chronology: { accepted: eventsTotal, disputed: 0, superseded: 0 },
+            people: { accepted: peopleTotal, disputed: 0, superseded: 0 },
+            entities: { accepted: entitiesTotal, disputed: 0, superseded: 0 },
+          },
+          pipeline: buildPipeline(status),
+          hardware: {},
+          activity: [],
+          all_docs: (allDocs || []).map(function (d) {
+            return { id: d.document_id, title: d.label || d.document_id, status: d.pipeline_stage || 'unknown' };
+          }),
+        };
+      }
+
+      function statusToDocumentCounts(status) {
+        const gc = status.graph_counts || {};
+        const eventsTotal = gc.events_total != null ? gc.events_total : (status.chronology_event_count || 0);
+        const peopleTotal = gc.persons_total != null ? gc.persons_total : (status.people_mentioned_count || 0);
+        const entitiesTotal = gc.entities_total != null ? gc.entities_total : 0;
+        return {
+          chronology: { total: eventsTotal, confirmed: eventsTotal, challenged: 0, nominated: 0 },
+          people: peopleTotal,
+          entities: entitiesTotal,
+          entity_claims: { total: gc.claims_total || 0 },
+        };
+      }
+
+      function eventsToClaims(rows) {
+        return rows.map(function (e, index) {
+          const prov = (Array.isArray(e.provenance) && e.provenance[0]) || {};
+          return {
+            id: e.id || ('reg-event-' + index),
+            date: e.date || e.event_date || 'undated',
+            page: prov.page != null ? prov.page : (prov.page_start != null ? prov.page_start : 0),
+            title: e.title || e.text || 'Untitled',
+            who: [],
+            lane: 'structural',
+            conf: e.conf != null ? e.conf : (e.salience_score != null ? e.salience_score : 0.85),
+            status: 'accepted',
+            dataSource: 'real',
+          };
+        });
+      }
+
+      function peopleToClaims(rows) {
+        return rows.map(function (p, index) {
+          const prov = (Array.isArray(p.provenance) && p.provenance[0]) || {};
+          const page = prov.page != null ? prov.page : prov.page_start;
+          return {
+            id: p.id || ('reg-person-' + index),
+            name: p.name || 'Unknown',
+            role: p.role || 'Mentioned person',
+            mentions: Array.isArray(p.provenance) ? p.provenance.length : 1,
+            conf: p.conf != null ? p.conf : (p.salience_score != null ? p.salience_score : 0.85),
+            source: 'Graph register',
+            lastSeen: page != null ? ('p. ' + page) : '—',
+            status: 'accepted',
+            dataSource: 'real',
+          };
+        });
+      }
+
+      function entitiesToClaims(rows) {
+        return rows.map(function (e, index) {
+          const prov = (Array.isArray(e.provenance) && e.provenance[0]) || {};
+          const page = prov.page != null ? prov.page : prov.page_start;
+          return {
+            id: e.id || ('reg-entity-' + index),
+            canonical: e.canonical || e.name || 'Unknown',
+            name: e.name || e.canonical,
+            type: String(e.type || 'entity').toUpperCase(),
+            mentions: Array.isArray(e.provenance) ? e.provenance.length : 1,
+            aliases: 0,
+            conf: e.conf != null ? e.conf : (e.salience_score != null ? e.salience_score : 0.85),
+            asic: null,
+            lastSeen: page != null ? ('p. ' + page) : '—',
+            status: 'accepted',
+            dataSource: 'real',
+          };
+        });
+      }
+
+      function fetchRegister(docId, type, limit) {
+        return nativeFetch(
+          '/api/registers/' + encodeURIComponent(docId) + '?type=' + encodeURIComponent(type) + '&limit=' + limit,
+          { headers: apiAuthHeaders() }
+        ).then(function (r) { return r.ok ? r.json() : { rows: [] }; });
+      }
+
+      function fetchArtifactPayload(docId, kind) {
+        if (kind === 'synthesis-v1' || kind === 'synthesis' || kind === 'memo' || kind === 'extrefs' || kind === 'mindmap') {
+          return Promise.resolve({ claims: [], sections: [], total: 0, message: 'Not available in this build' });
+        }
+        if (kind === 'chronology') {
+          return fetchRegister(docId, 'events', 1000).then(function (data) {
+            const rows = registerRowsToEvents(data || { rows: [] });
+            const claims = eventsToClaims(rows);
+            return { claims: claims, total: claims.length };
+          });
+        }
+        if (kind === 'people') {
+          return fetchRegister(docId, 'people', 500).then(function (data) {
+            const rows = registerRowsToPeople(data || { rows: [] });
+            const claims = peopleToClaims(rows);
+            return { claims: claims, total: claims.length };
+          });
+        }
+        if (kind === 'entities') {
+          return Promise.all([
+            fetchRegister(docId, 'organisation', 500),
+            fetchRegister(docId, 'legislation', 500),
+            fetchRegister(docId, 'authority', 500),
+          ]).then(function (parts) {
+            const combined = parts.reduce(function (acc, part) { return acc.concat(part.rows || []); }, []);
+            const rows = registerRowsToEntities({ rows: combined });
+            const claims = entitiesToClaims(rows);
+            return { claims: claims, total: claims.length };
+          });
+        }
+        return Promise.resolve({ claims: [], total: 0 });
+      }
+
+      function fetchDocumentCounts(docId) {
+        return nativeFetch('/api/status/' + encodeURIComponent(docId), { headers: apiAuthHeaders() })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (status) { return status ? statusToDocumentCounts(status) : null; });
+      }
+
+      function fetchOperatorStatus(docId) {
+        function loadStatus(id) {
+          return nativeFetch('/api/status/' + encodeURIComponent(id), { headers: apiAuthHeaders() })
+            .then(function (r) { return r.ok ? r.json() : null; });
+        }
+        function loadList() {
+          return nativeFetch('/api/status?limit=50', { headers: apiAuthHeaders() })
+            .then(function (r) { return r.ok ? r.json() : { documents: [] }; })
+            .then(function (data) { return data.documents || []; });
+        }
+        if (docId) {
+          return Promise.all([loadStatus(docId), loadList()]).then(function (parts) {
+            const status = parts[0];
+            const docs = parts[1];
+            if (!status) return buildOperatorPayload({ document_id: docId }, docs);
+            return buildOperatorPayload(status, docs);
+          });
+        }
+        return loadList().then(function (docs) {
+          if (!docs.length) return buildOperatorPayload({ document_id: '' }, []);
+          return loadStatus(docs[0].document_id).then(function (status) {
+            return buildOperatorPayload(status || docs[0], docs);
+          });
+        });
+      }
+
+      const STUB_EMPTY = { events: [] };
+      const STUB_RUNS = { runs: [] };
+      const STUB_CONVERGENCE = { confirmed: null };
+      const NOT_AVAILABLE = { message: 'Not available in this build' };
+
+      window.fetch = function (input, init) {
+        init = authInit(input, init);
+        const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+        let parsed;
+        try { parsed = new URL(url, window.location.origin); } catch (e) { return nativeFetch(input, init); }
+        const path = parsed.pathname;
+        const method = ((init && init.method) || 'GET').toUpperCase();
+
+        if (path === '/api/operator-status') {
+          const docId = parsed.searchParams.get('doc_id');
+          return fetchOperatorStatus(docId).then(function (payload) { return jsonResponse(payload); });
+        }
+
+        const countsMatch = path.match(/^\/api\/docs\/([^/]+)\/(counts|artifact-counts)$/);
+        if (countsMatch) {
+          return fetchDocumentCounts(decodeURIComponent(countsMatch[1]))
+            .then(function (payload) { return jsonResponse(payload || {}); });
+        }
+
+        const artifactMatch = path.match(/^\/api\/docs\/([^/]+)\/artifacts\/([^/]+)$/);
+        if (artifactMatch) {
+          const docId = decodeURIComponent(artifactMatch[1]);
+          const kind = decodeURIComponent(artifactMatch[2]);
+          return fetchArtifactPayload(docId, kind).then(function (payload) { return jsonResponse(payload); });
+        }
+
+        if (path.match(/^\/api\/docs\/[^/]+\/mindmap$/)) {
+          return Promise.resolve(jsonResponse(Object.assign({ nodes: [], edges: [] }, NOT_AVAILABLE)));
+        }
+
+        if (path.match(/^\/api\/docs\/[^/]+\/activity-events/)) {
+          return Promise.resolve(jsonResponse(STUB_EMPTY));
+        }
+
+        if (path.match(/^\/api\/docs\/[^/]+\/people-mentioned\/runs$/)) {
+          return Promise.resolve(jsonResponse(STUB_RUNS));
+        }
+
+        if (path.match(/^\/api\/docs\/[^/]+\/claims\/convergence$/)) {
+          return Promise.resolve(jsonResponse(STUB_CONVERGENCE));
+        }
+
+        if (path.indexOf('reprocess') !== -1 || (method === 'POST' && path.match(/^\/api\/docs\/[^/]+\/[^/]+\/rerun$/))) {
+          return Promise.resolve(jsonResponse({ detail: NOT_AVAILABLE }, 501));
+        }
+
+        if (path === '/api/llm-metrics' || path.indexOf('/api/llm-telemetry') === 0 || path === '/api/hardware/throughput') {
+          return Promise.resolve(jsonResponse({}));
+        }
+
+        return nativeFetch(input, init);
+      };
+    })();
+  </script>
   <script type="text/babel" src="view-switcher.jsx"></script>
   <script type="text/babel" src="direction-a.jsx"></script>
   <script type="text/babel" src="direction-b.jsx"></script>

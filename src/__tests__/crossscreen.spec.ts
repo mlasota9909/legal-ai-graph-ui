@@ -1,4 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 
 const REAL_DOC_IDS = ['romancath', 'original_royalcomm', 'volume_10', 'tanyaday', 'hopper']
 const DEFAULT_REAL_DOC_ID = 'original_royalcomm'
@@ -68,9 +70,14 @@ test('lattice artifact counts match atrium tab badges', async ({ page }) => {
   expect(latticeEntities).toBeGreaterThan(0)
   expect(latticePeople).toBeGreaterThan(0)
 
-  // Navigate to Atrium
+  // Navigate to Atrium; wait until its Chronology tab badge matches the Lattice count
   await page.goto(`/runs/${docId}/chronology`)
-  await page.waitForTimeout(1000)
+  await page.waitForFunction((expected: number) => {
+    const btn = [...document.querySelectorAll('button')].find(b => /Chronology/i.test(b.textContent ?? ''))
+    if (!btn) return false
+    const match = btn.textContent?.match(/(\d[\d,]+)/)
+    return match != null && parseInt(match[1].replace(/,/g, ''), 10) === expected
+  }, latticeChronology, { timeout: 15000 })
 
   // Read tab badge numbers
   const chronoTab = page.locator('button', { hasText: 'Chronology' }).first()
@@ -302,4 +309,120 @@ test('evidence panel requests api/graph endpoint', async ({ page }) => {
   await page.waitForTimeout(5000)
 
   expect(captured).toBe(true)
+})
+
+const STATIC_LAWYER_URL = 'http://localhost:5173/static/lawyer.html'
+const STATIC_DIR = join(process.cwd(), 'static')
+
+async function serveStaticLawyerJsxAsRaw(page: Page): Promise<void> {
+  await page.route('**/static/*.jsx', async (route) => {
+    const fileName = basename(new URL(route.request().url()).pathname)
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/babel',
+      body: readFileSync(join(STATIC_DIR, fileName), 'utf8'),
+    })
+  })
+}
+
+async function waitForStaticLawyerMatterList(page: Page): Promise<number> {
+  await page.waitForFunction(() => {
+    const sidebar = document.querySelector('#panel-doc-list, aside, [class*="side"]')
+    if (!sidebar) return false
+    const items = Array.from(
+      sidebar.querySelectorAll(
+        '.lw-doc-card, [class*="matter"], [class*="doc"], li, [role="listitem"]'
+      )
+    )
+    return items.some((item) => (item.textContent ?? '').trim().length > 0)
+  }, { timeout: 10000 })
+
+  return page.evaluate(() => {
+    const sidebar = document.querySelector('#panel-doc-list, aside, [class*="side"]')
+    if (!sidebar) return 0
+    return Array.from(
+      sidebar.querySelectorAll(
+        '.lw-doc-card, [class*="matter"], [class*="doc"], li, [role="listitem"]'
+      )
+    ).filter((item) => (item.textContent ?? '').trim().length > 0).length
+  })
+}
+
+function firstStaticLawyerSidebarItem(page: Page) {
+  return page
+    .locator(
+      '#panel-doc-list .lw-doc-card, aside .lw-doc-card, ' +
+        '#panel-doc-list .lw-matter-head, aside .lw-matter-head, ' +
+        '#panel-doc-list [class*="matter-row"], aside [class*="matter-row"], ' +
+        '#panel-doc-list li, aside li, #panel-doc-list [role="listitem"], aside [role="listitem"]'
+    )
+    .filter({ hasText: /\S/ })
+    .first()
+}
+
+async function waitForStaticLawyerChronologyRows(page: Page): Promise<number> {
+  await page.waitForFunction(() => {
+    const panel = document.querySelector(
+      '#panel-chronology, [data-panel-id*="chronology"], [id*="chronology"]'
+    )
+    if (!panel) return false
+    return panel.querySelectorAll('.lwa-tl-row, [role="row"], tbody tr').length > 0
+  }, { timeout: 15000 })
+
+  return page.evaluate(() => {
+    const panel = document.querySelector(
+      '#panel-chronology, [data-panel-id*="chronology"], [id*="chronology"]'
+    )
+    return panel?.querySelectorAll('.lwa-tl-row, [role="row"], tbody tr').length ?? 0
+  })
+}
+
+test('static lawyer app loads matter list', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  const failedFetchErrors: string[] = []
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && /Failed to fetch/i.test(msg.text())) {
+      failedFetchErrors.push(msg.text())
+    }
+  })
+
+  await page.goto(STATIC_LAWYER_URL)
+
+  const matterCount = await waitForStaticLawyerMatterList(page)
+  expect(matterCount).toBeGreaterThan(0)
+  expect(failedFetchErrors).toEqual([])
+})
+
+test('static lawyer app loads chronology rows', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  await page.goto(STATIC_LAWYER_URL)
+  await waitForStaticLawyerMatterList(page)
+
+  await firstStaticLawyerSidebarItem(page).click()
+
+  const chronologyTab = page.getByRole('button', { name: /Chronology/i }).first()
+  await expect(chronologyTab).toBeVisible({ timeout: 10000 })
+  await chronologyTab.click()
+
+  const rowCount = await waitForStaticLawyerChronologyRows(page)
+  expect(rowCount).toBeGreaterThan(0)
+})
+
+test('static lawyer app data_source is real', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  const realSourceResponse = page.waitForResponse(async (response) => {
+    if (!response.ok()) return false
+    const url = response.url()
+    if (!url.includes('/api/matters') && !url.includes('/api/status')) return false
+    try {
+      const data = await response.json()
+      return data?.data_source === 'real'
+    } catch {
+      return false
+    }
+  }, { timeout: 10000 })
+
+  await page.goto(STATIC_LAWYER_URL)
+
+  await expect(realSourceResponse).resolves.toBeTruthy()
 })
