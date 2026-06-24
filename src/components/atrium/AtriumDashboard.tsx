@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   ArtifactSummary,
   ArtifactView,
@@ -449,6 +449,10 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const [selectedClaim, setSelectedClaim] = useState<ChronologyClaim | null>(null)
   const [claimDetail, setClaimDetail] = useState<ClaimDetail | null>(null)
   const [claimLoading, setClaimLoading] = useState(false)
+  const [feedbackVerdict, setFeedbackVerdict] = useState<'approve' | 'reject' | 'needs_review'>('approve')
+  const [feedbackNote, setFeedbackNote] = useState('')
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null)
   const [localTab, setLocalTab] = useState<ArtifactView>(initialTab)
   const [localListFilter, setLocalListFilter] = useState<ListStatusFilter>('all')
   const [showFieldIds, setShowFieldIds] = useState(false)
@@ -459,6 +463,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const showSources = nav?.showSources ?? false
 
   useEffect(() => {
+    setFeedbackMsg(null)
+    setFeedbackNote('')
+    setFeedbackVerdict('approve')
     if (!selectedClaim || !nav?.docId) { setClaimDetail(null); return }
     setClaimLoading(true)
     const token = localStorage.getItem('legal_ai_token')
@@ -469,6 +476,44 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
       .catch(() => setClaimDetail(null))
       .finally(() => setClaimLoading(false))
   }, [selectedClaim, nav?.docId])
+
+  const handleFeedbackSubmit = useCallback(async () => {
+    if (!selectedClaim || !nav?.docId) return
+    setFeedbackSubmitting(true)
+    setFeedbackMsg(null)
+    const token = localStorage.getItem('legal_ai_token')
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+    try {
+      const res = await fetch(
+        `/api/docs/${encodeURIComponent(nav.docId)}/feedback`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            claim_id: selectedClaim.claim_id ?? selectedClaim.id,
+            verdict: feedbackVerdict,
+            note: feedbackNote.trim() || undefined,
+            adjudicator: localStorage.getItem('legal_ai_user') ?? 'operator-ui',
+          }),
+        }
+      )
+      if (res.ok) {
+        setFeedbackMsg('Recorded ✓')
+        setFeedbackNote('')
+      } else {
+        const err = (await res.json().catch(() => ({}))) as { detail?: { message?: string } | string }
+        const msg = typeof err.detail === 'string' ? err.detail : err.detail?.message ?? 'Failed'
+        setFeedbackMsg(msg)
+      }
+    } catch {
+      setFeedbackMsg('Request failed')
+    } finally {
+      setFeedbackSubmitting(false)
+    }
+  }, [selectedClaim, nav?.docId, feedbackVerdict, feedbackNote])
 
   const artifact = findArtifact(data.artifacts, activeTab) ?? data.artifacts[0]
   const isListArtifact = artifact?.kind === 'list'
@@ -906,6 +951,84 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
             {!claimLoading && !claimDetail && (
               <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>No detail available for this claim.</p>
             )}
+
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--rule-soft)' }}>
+              <div style={{ fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--ink-3)', marginBottom: 10 }}>
+                Record adjudication
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                {(['approve', 'reject', 'needs_review'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setFeedbackVerdict(v)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      border: '1px solid',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      borderColor: feedbackVerdict === v ? 'var(--accent)' : 'var(--rule)',
+                      background: feedbackVerdict === v ? 'var(--accent-soft)' : 'var(--bg)',
+                      color: feedbackVerdict === v ? 'var(--accent)' : 'var(--ink-2)',
+                      fontWeight: feedbackVerdict === v ? 600 : 400,
+                    }}
+                  >
+                    {v.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                rows={2}
+                placeholder="Note (optional)"
+                value={feedbackNote}
+                onChange={(e) => setFeedbackNote(e.target.value)}
+                style={{
+                  width: '100%',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  border: '1px solid var(--rule)',
+                  borderRadius: 4,
+                  padding: '6px 8px',
+                  background: 'var(--bg)',
+                  color: 'var(--ink)',
+                  resize: 'vertical',
+                  boxSizing: 'border-box',
+                  marginBottom: 8,
+                }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={feedbackSubmitting}
+                  onClick={() => void handleFeedbackSubmit()}
+                  style={{
+                    padding: '5px 14px',
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: 600,
+                    border: '1px solid var(--accent)',
+                    borderRadius: 4,
+                    background: 'var(--accent)',
+                    color: 'white',
+                    cursor: feedbackSubmitting ? 'not-allowed' : 'pointer',
+                    opacity: feedbackSubmitting ? 0.6 : 1,
+                  }}
+                >
+                  {feedbackSubmitting ? 'Saving…' : 'Submit'}
+                </button>
+                {feedbackMsg && (
+                  <span style={{
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: feedbackMsg.includes('✓') ? 'var(--good)' : 'var(--bad)',
+                  }}>
+                    {feedbackMsg}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
