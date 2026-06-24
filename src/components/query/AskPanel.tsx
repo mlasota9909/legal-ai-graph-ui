@@ -8,6 +8,7 @@ interface AskPanelProps {
   docId: string
   namespace: string | null
   onBack: () => void
+  onGoEvidence?: (nodeId: string) => void
 }
 
 type ValidationStatus = 'supported' | 'partial' | 'unsupported'
@@ -97,7 +98,7 @@ const VALIDATION_STYLES: Record<
   },
 }
 
-export function AskPanel({ docId: _docId, namespace, onBack }: AskPanelProps) {
+export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: AskPanelProps) {
   const nav = useNav()
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
@@ -146,6 +147,7 @@ export function AskPanel({ docId: _docId, namespace, onBack }: AskPanelProps) {
   const validation = parseValidationStatus(response?.validation_status)
   const validationStyle = VALIDATION_STYLES[validation]
   const answerBlocks = response ? matchCitationsToSentences(splitSentences(response.answer), response.citations) : []
+  const firstCitationNodeId = response?.citations.find((c) => c.node_id)?.node_id ?? null
 
   return (
     <div className="theme-atrium flex min-h-screen flex-col bg-[var(--bg)] text-[var(--ink)]">
@@ -217,6 +219,16 @@ export function AskPanel({ docId: _docId, namespace, onBack }: AskPanelProps) {
                 confidence {response.confidence.toFixed(2)}
               </span>
             </div>
+
+            {onGoEvidence && firstCitationNodeId && (
+              <button
+                type="button"
+                onClick={() => onGoEvidence(firstCitationNodeId)}
+                className="self-start font-mono text-[11px] text-[var(--accent)] underline-offset-2 hover:underline"
+              >
+                View in graph →
+              </button>
+            )}
 
             <div className="space-y-5">
               {answerBlocks.map((block, index) => (

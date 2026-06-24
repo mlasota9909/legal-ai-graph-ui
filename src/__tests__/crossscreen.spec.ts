@@ -493,3 +493,25 @@ test('AskPanel returns an answer with citations', async ({ page }) => {
   const citationEl = page.locator('main section button.font-mono').first()
   await expect(citationEl).toBeVisible({ timeout: 5000 })
 })
+
+test('activity stream endpoint returns real data_source', async ({ page }) => {
+  // Set up capture BEFORE navigation to avoid race
+  const activityResp = page.waitForResponse(
+    async (resp) => {
+      if (!resp.url().includes('/activity')) return false
+      if (!resp.ok()) return false
+      try {
+        const data = (await resp.json()) as { data_source?: string }
+        return data?.data_source === 'real'
+      } catch {
+        return false
+      }
+    },
+    { timeout: 15000 },
+  )
+
+  await page.goto('/')
+
+  const resp = await activityResp
+  expect(resp.ok()).toBeTruthy()
+})

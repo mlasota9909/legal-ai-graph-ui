@@ -27,6 +27,7 @@ function AppRoutes() {
         docId={workspace.docId}
         namespace={workspace.namespace}
         onBack={() => workspace.go('monitor')}
+        onGoEvidence={(nodeId) => workspace.go('evidence', nodeId)}
       />
     ) : (
       <AtriumDashboard data={workspace.data} view={workspace.view} />
@@ -37,6 +38,7 @@ function AppRoutes() {
       value={{
         view: workspace.view,
         highlight: workspace.highlight,
+        docId: workspace.docId,
         listFilter: workspace.listFilter,
         showSources: workspace.showSources,
         setListFilter: workspace.setListFilter,

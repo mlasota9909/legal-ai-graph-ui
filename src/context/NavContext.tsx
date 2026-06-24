@@ -5,6 +5,7 @@ import type { ListStatusFilter } from '../types/listFilter'
 export interface NavState {
   view: ArtifactView
   highlight: string | null
+  docId: string
   listFilter: ListStatusFilter
   showSources: boolean
   setListFilter: (filter: ListStatusFilter) => void

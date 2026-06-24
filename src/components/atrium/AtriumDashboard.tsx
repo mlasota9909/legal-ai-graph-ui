@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   ArtifactSummary,
   ArtifactView,
@@ -35,6 +35,17 @@ import {
 } from '../../utils/listStatus'
 import { SourceDot } from '../shared/SourceDot'
 
+interface ClaimDetail {
+  id: string
+  text?: string | null
+  type?: string | null
+  salience_score?: number | null
+  validation_status?: string | null
+  provenance_chain?: { chunk_id?: string; page?: number; source_uri?: string }[]
+  linked_entities?: { id: string; name?: string; type?: string }[]
+  adjudications?: { verdict: string; note?: string; created_at?: string }[]
+}
+
 const TABS: { id: ArtifactView; label: string; countKey: 'count' | 'sections' }[] = [
   { id: 'chronology', label: 'Chronology', countKey: 'count' },
   { id: 'entities', label: 'Entity register', countKey: 'count' },
@@ -70,10 +81,12 @@ function ChronologyTimeline({
   rows,
   highlight,
   showFieldIds,
+  onClaimClick,
 }: {
   rows: ChronologyClaim[]
   highlight: string | null
   showFieldIds: boolean
+  onClaimClick?: (claim: ChronologyClaim) => void
 }) {
   const nav = useNav()
   return (
@@ -84,7 +97,8 @@ function ChronologyTimeline({
         return (
           <div
             key={row.id}
-            className={`relative grid grid-cols-[80px_1fr] gap-6 border-b border-[var(--rule-soft)] py-4 last:border-b-0 ${
+            onClick={() => onClaimClick?.(row)}
+            className={`relative grid grid-cols-[80px_1fr] gap-6 border-b border-[var(--rule-soft)] py-4 last:border-b-0 cursor-pointer hover:bg-[var(--rule-soft)] ${
               highlight === row.id ? 'flash' : ''
             }`}
           >
@@ -432,6 +446,9 @@ function SignalList({ signals, onNavigate }: { signals: CrossArtifactSignal[]; o
 
 export function AtriumDashboard({ data, view, initialTab = 'chronology' }: AtriumDashboardProps) {
   const nav = useNav()
+  const [selectedClaim, setSelectedClaim] = useState<ChronologyClaim | null>(null)
+  const [claimDetail, setClaimDetail] = useState<ClaimDetail | null>(null)
+  const [claimLoading, setClaimLoading] = useState(false)
   const [localTab, setLocalTab] = useState<ArtifactView>(initialTab)
   const [localListFilter, setLocalListFilter] = useState<ListStatusFilter>('all')
   const [showFieldIds, setShowFieldIds] = useState(false)
@@ -440,6 +457,18 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const listFilter = nav?.listFilter ?? localListFilter
   const setListFilter = nav?.setListFilter ?? setLocalListFilter
   const showSources = nav?.showSources ?? false
+
+  useEffect(() => {
+    if (!selectedClaim || !nav?.docId) { setClaimDetail(null); return }
+    setClaimLoading(true)
+    const token = localStorage.getItem('legal_ai_token')
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
+    fetch(`/api/docs/${encodeURIComponent(nav.docId)}/claims/${encodeURIComponent(selectedClaim.id)}`, { headers })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ClaimDetail | null) => setClaimDetail(d))
+      .catch(() => setClaimDetail(null))
+      .finally(() => setClaimLoading(false))
+  }, [selectedClaim, nav?.docId])
 
   const artifact = findArtifact(data.artifacts, activeTab) ?? data.artifacts[0]
   const isListArtifact = artifact?.kind === 'list'
@@ -754,7 +783,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           </div>
 
           {activeTab === 'chronology' && (
-            <ChronologyTimeline rows={filteredChronology} highlight={highlight} showFieldIds={showFieldIds} />
+            <ChronologyTimeline rows={filteredChronology} highlight={highlight} showFieldIds={showFieldIds} onClaimClick={setSelectedClaim} />
           )}
           {activeTab === 'entities' && <EntityList rows={filteredEntities} highlight={highlight} showFieldIds={showFieldIds} />}
           {activeTab === 'people' && <PeopleList rows={filteredPeople} highlight={highlight} showFieldIds={showFieldIds} />}
@@ -813,6 +842,73 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           </div>
         </div>
       </div>
+
+      {selectedClaim && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}
+          onClick={() => setSelectedClaim(null)}
+        >
+          <div
+            style={{ width: 440, background: 'var(--panel)', borderLeft: '1px solid var(--rule)', overflowY: 'auto', padding: 24 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 500, fontFamily: 'var(--font-serif, serif)', color: 'var(--ink)' }}>
+                {selectedClaim.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSelectedClaim(null)}
+                style={{ background: 'none', border: 0, fontSize: 20, color: 'var(--ink-3)', cursor: 'pointer' }}
+              >×</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 12 }}>
+              {selectedClaim.date} · {selectedClaim.lane} · conf {selectedClaim.conf.toFixed(2)}
+            </div>
+
+            {claimLoading && <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Loading…</p>}
+
+            {!claimLoading && claimDetail && (
+              <>
+                {claimDetail.text && (
+                  <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', marginBottom: 16 }}>{claimDetail.text}</p>
+                )}
+                {claimDetail.validation_status && (
+                  <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--ink-2)', marginBottom: 12 }}>
+                    Status: <strong>{claimDetail.validation_status}</strong>
+                    {claimDetail.salience_score != null && <span> · salience {claimDetail.salience_score.toFixed(2)}</span>}
+                  </div>
+                )}
+                {claimDetail.provenance_chain && claimDetail.provenance_chain.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--ink-3)', marginBottom: 6 }}>Sources</div>
+                    {claimDetail.provenance_chain.map((p, i) => (
+                      <div key={i} style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 4 }}>
+                        {p.page != null && <span>p.{p.page} </span>}
+                        {p.chunk_id && <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{p.chunk_id.slice(0, 12)}…</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {claimDetail.adjudications && claimDetail.adjudications.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--ink-3)', marginBottom: 6 }}>Adjudications</div>
+                    {claimDetail.adjudications.map((a, i) => (
+                      <div key={i} style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 4 }}>
+                        <strong>{a.verdict}</strong>{a.note ? ` — ${a.note}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {!claimLoading && !claimDetail && (
+              <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>No detail available for this claim.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
