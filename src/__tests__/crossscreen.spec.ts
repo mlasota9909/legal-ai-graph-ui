@@ -426,3 +426,70 @@ test('static lawyer app data_source is real', async ({ page }) => {
 
   await expect(realSourceResponse).resolves.toBeTruthy()
 })
+
+test('login page renders with email and password fields', async ({ page }) => {
+  await page.goto('/login')
+
+  // Auth is disabled in dev mode (VITE_AUTH_DISABLED=true) so the form
+  // renders synchronously, then a 1s timer redirects to '/'.
+  // Assert the form elements are visible within that window.
+  const emailInput = page.locator('input[type="email"]')
+  const passwordInput = page.locator('input[type="password"]')
+  const submitButton = page.locator('button[type="submit"]')
+
+  await expect(emailInput).toBeVisible({ timeout: 3000 })
+  await expect(passwordInput).toBeVisible({ timeout: 3000 })
+  await expect(submitButton).toBeVisible({ timeout: 3000 })
+})
+
+test('AskPanel returns an answer with citations', async ({ page }) => {
+  const statusResponse = page.waitForResponse(async (response) => {
+    if (!response.ok()) return false
+    const url = response.url()
+    if (!url.includes('/api/status') || /\/api\/status\/.+/.test(url)) return false
+    return true
+  }, { timeout: 15000 })
+
+  await page.goto('/')
+  await page.evaluate(() =>
+    fetch('/api/status', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('legal_ai_token') ?? ''}` },
+    }),
+  )
+
+  const response = await statusResponse
+  const payload = (await response.json()) as { documents?: { document_id: string }[] }
+  const docId = payload.documents?.[0]?.document_id
+  expect(docId).toBeTruthy()
+
+  await page.goto(`/runs/${docId}/ask`)
+
+  const textarea = page.locator('textarea')
+  await textarea.waitFor({ timeout: 10000 })
+
+  await textarea.fill('What is the main subject of this document?')
+
+  // The submit button is disabled until the namespace loads from /api/status/{docId}.
+  // Wait for it to become enabled — this is the reliable signal that the namespace is ready.
+  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 10000 })
+
+  // Set up query response capture BEFORE clicking to avoid race condition
+  const queryResponsePromise = page.waitForResponse(
+    (resp) => resp.url().includes('/api/query'),
+    { timeout: 30000 },
+  )
+
+  await submitButton.click()
+
+  const queryResp = await queryResponsePromise
+  expect(queryResp.ok()).toBeTruthy()
+
+  // Answer renders as <p class="font-serif …"> inside <main> → <section> → answer blocks
+  const answerEl = page.locator('main section p').first()
+  await expect(answerEl).toBeVisible({ timeout: 10000 })
+
+  // Citations render as <button class="… font-mono …"> inside each answer block
+  const citationEl = page.locator('main section button.font-mono').first()
+  await expect(citationEl).toBeVisible({ timeout: 5000 })
+})

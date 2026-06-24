@@ -187,7 +187,7 @@ export function AskPanel({ docId: _docId, namespace, onBack }: AskPanelProps) {
 
         <button
           type="button"
-          disabled={loading || !question.trim()}
+          disabled={loading || !question.trim() || !namespace}
           onClick={() => void handleSubmit()}
           className="mt-4 font-mono text-[13px] font-semibold text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         >
