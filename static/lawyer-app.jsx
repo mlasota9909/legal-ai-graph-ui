@@ -1,6 +1,14 @@
 // Lawyer view — shell, login flow, sidebar, tab strip, chat bar.
 // Aesthetic carries forward from Atrium (calm, editorial, slate-teal accent).
 
+function apiAuthHeaders(withJson) {
+  const headers = {};
+  if (withJson) headers['Content-Type'] = 'application/json';
+  const token = localStorage.getItem('legal_ai_token');
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return headers;
+}
+
 const LD = window.LawyerData;
 const OD = window.LegalAIMockData;  // operator-side data (chronology/people/entities)
 
@@ -1116,7 +1124,7 @@ function _claimArtifact(claimId) {
   return 'chronology';
 }
 
-function ChatDock({ onCite, docId }) {
+function ChatDock({ onCite, docId, currentNamespace }) {
   const [expanded, setExpanded] = React.useState(false);
   const [val, setVal] = React.useState('');
   const [history, setHistory] = React.useState([]);
@@ -1137,18 +1145,18 @@ function ChatDock({ onCite, docId }) {
     setExpanded(true);
     setLoading(true);
     try {
-      const resp = await fetch('/api/corpus/ask', {
+      const resp = await fetch('/api/query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document_id: docId, question: text, mode: 'auto' }),
+        headers: apiAuthHeaders(true),
+        body: JSON.stringify({ question: text, namespace: currentNamespace || null }),
       });
       const data = resp.ok ? await resp.json() : null;
       const answer = data?.answer || 'No answer found in the available artifact claims.';
-      const claimsUsed = Array.isArray(data?.claims_used) ? data.claims_used : [];
-      const cites = claimsUsed.slice(0, 6).map(c => ({
-        artifact: _claimArtifact(c.claim_id),
-        id: c.claim_id,
-        label: (c.summary || c.claim_id || '').slice(0, 70),
+      const citations = Array.isArray(data?.citations) ? data.citations : [];
+      const cites = citations.slice(0, 6).map(c => ({
+        artifact: _claimArtifact(c.evidence_id || c.result_id),
+        id: c.evidence_id || c.result_id || '',
+        label: [c.source, c.page != null ? 'p.' + c.page : ''].filter(Boolean).join(' · ') || (c.evidence_id || '').slice(0, 70),
       }));
       const bot = { id: 'a'+Date.now(), who: 'assistant', t: new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false}), text: answer, cites };
       setHistory(h => h.filter(m => m.id !== '__thinking__').concat(bot));

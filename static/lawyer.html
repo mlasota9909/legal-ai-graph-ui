@@ -27,6 +27,14 @@
   <script type="text/babel" src="lawyer-artifacts.jsx"></script>
 
   <script type="text/babel" data-presets="react">
+    function apiAuthHeaders(withJson) {
+      const headers = {};
+      if (withJson) headers['Content-Type'] = 'application/json';
+      const token = localStorage.getItem('legal_ai_token');
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
     // T177 — TRACEABILITY.md panel IDs: panel:chronology|people|entities|synthesis|mindmap|trace-debug:{document_id}
     function specPanelId(kind, docId) {
       return `panel:${kind}:${docId || ''}`;
@@ -44,7 +52,7 @@
         setLoading(true);
         setError('');
         setTraceJson(null);
-        fetch('/api/docs/' + encodeURIComponent(docId) + '/trace')
+        fetch('/api/docs/' + encodeURIComponent(docId) + '/trace', { headers: apiAuthHeaders() })
           .then(r => r.ok ? r.json() : Promise.reject(new Error('Trace fetch failed: ' + r.status)))
           .then(data => { if (!cancelled) setTraceJson(data); })
           .catch(err => { if (!cancelled) setError(err.message || 'Failed to load trace'); })
@@ -121,7 +129,10 @@
         try {
           const fd = new FormData();
           fd.append('files', selectedFile);
-          const res = await fetch('/api/upload', { method: 'POST', body: fd });
+          const uploadHeaders = {};
+          const uploadToken = localStorage.getItem('legal_ai_token');
+          if (uploadToken) uploadHeaders['Authorization'] = 'Bearer ' + uploadToken;
+          const res = await fetch('/api/upload', { method: 'POST', headers: uploadHeaders, body: fd });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.detail?.message || `Upload failed: ${res.status}`);
@@ -358,22 +369,41 @@
         setTabCounts({});
         if (!effectiveDocId) return;
         let cancelled = false;
-        fetch('/api/docs/' + encodeURIComponent(effectiveDocId) + '/artifact-counts')
+        function updateCounts(data) {
+          setTabCounts({
+            chronology: data.chronology_event_count,
+            entities: data.graph_counts?.entities_total,
+            people: data.people_mentioned_count ?? data.individuals_count,
+            claims: data.graph_counts?.claims_total,
+          });
+        }
+        fetch('/api/status/' + encodeURIComponent(effectiveDocId), { headers: apiAuthHeaders() })
           .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data && !cancelled) setTabCounts(data); })
+          .then(data => { if (!data || cancelled) return; updateCounts(data); })
           .catch(() => {});
         return () => { cancelled = true; };
       }, [effectiveDocId]);
 
       // Load real matters from the API; fall back to mock data on error
       React.useEffect(() => {
-        fetch('/api/matters')
+        fetch('/api/matters', { headers: apiAuthHeaders() })
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (data && data.matters && data.matters.length) {
               const sortedMatters = data.matters.map(m => ({
-                ...m,
-                docs: [...(m.docs || [])].sort((a, b) => String(b.uploadTs || b.id || '').localeCompare(String(a.uploadTs || a.id || '')))
+                id: m.id,
+                namespace: m.namespace,
+                name: m.title || m.id,
+                shortName: m.title || m.id,
+                client: '',
+                practice: '',
+                lead: '',
+                docs: [{
+                  id: m.id,
+                  title: m.title || m.id,
+                  uploadTs: '',
+                }],
+                folders: [{ id: 'root', name: 'All documents' }],
               }));
               setMatters(sortedMatters);
               const newest = newestMatterDoc(sortedMatters);
@@ -430,7 +460,7 @@
                   <div data-panel-id={specPanelId('mindmap', effectiveDocId)} style={{ display: 'none' }} aria-hidden="true" />
                   <TraceDebugPanel docId={effectiveDocId} />
                 </div>
-                <LawyerChatDock onCite={onCite} docId={effectiveDocId} />
+                <LawyerChatDock onCite={onCite} docId={effectiveDocId} currentNamespace={matter.namespace} />
               </div>
             </div>
           </div>

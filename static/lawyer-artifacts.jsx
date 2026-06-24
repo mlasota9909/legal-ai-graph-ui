@@ -5,6 +5,70 @@
 const LW2 = window.LawTheme;
 const ExportMenu = window.ExportMenu;
 
+function apiAuthHeaders(withJson) {
+  const headers = {};
+  if (withJson) headers['Content-Type'] = 'application/json';
+  const token = localStorage.getItem('legal_ai_token');
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return headers;
+}
+
+function registerRowsToEvents(data) {
+  const rows = (data && data.rows) ? data.rows : [];
+  return rows.map(row => {
+    const e = row.entity || {};
+    const text = e.event_description || e.description || e.label || row.id;
+    return {
+      id: row.id,
+      text,
+      title: text,
+      event_date: e.event_date_iso || e.event_date || '',
+      date: e.event_date_iso || e.event_date || '',
+      validation_status: e.validation_status || 'real',
+      salience_score: row.salience_score,
+      provenance: row.provenance || [],
+      data_source: 'real',
+      conf: row.salience_score,
+    };
+  });
+}
+
+function registerRowsToPeople(data) {
+  const rows = (data && data.rows) ? data.rows : [];
+  return rows.map(row => {
+    const e = row.entity || {};
+    return {
+      id: row.id,
+      name: e.name || e.display_name || e.label || row.id,
+      role: e.role || '',
+      validation_status: e.validation_status || 'real',
+      salience_score: row.salience_score,
+      provenance: row.provenance || [],
+      data_source: 'real',
+      conf: row.salience_score,
+    };
+  });
+}
+
+function registerRowsToEntities(data) {
+  const rows = (data && data.rows) ? data.rows : [];
+  return rows.map(row => {
+    const e = row.entity || {};
+    const name = e.name || e.display_name || e.label || e.title || row.id;
+    return {
+      id: row.id,
+      name,
+      canonical: name,
+      type: row.type || 'entity',
+      validation_status: e.validation_status || 'real',
+      salience_score: row.salience_score,
+      provenance: row.provenance || [],
+      data_source: 'real',
+      conf: row.salience_score,
+    };
+  });
+}
+
 const artStyle = `
   /* ── Shared artifact frame ───────────────────────────── */
   .lwa-frame{background:${LW2.panel};border:1px solid ${LW2.rule};border-radius:14px;
@@ -349,14 +413,20 @@ function FeedbackForm({ docId, claim, onRecorded, onCancel }) {
     if (!docId || !claim || saving) return;
     setSaving(true);
     setMessage('');
-    fetch(`/api/docs/${encodeURIComponent(docId)}/claims/${encodeURIComponent(claim.id)}/feedback`, {
+    const verdictMap = {
+      incorrect_claim: 'reject',
+      missing_context: 'needs_review',
+      duplicate: 'needs_review',
+      other: 'needs_review',
+    };
+    fetch(`/api/docs/${encodeURIComponent(docId)}/feedback`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiAuthHeaders(true),
       body: JSON.stringify({
-        feedback_type: feedbackType,
-        artifact_type: 'chronology',
-        reviewer_comment: comment,
-        severity: severity,
+        claim_id: claim.id,
+        verdict: verdictMap[feedbackType] || 'needs_review',
+        note: comment,
+        adjudicator: localStorage.getItem('legal_ai_user') || 'lawyer-ui',
       }),
     })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('Feedback request failed')))
@@ -404,7 +474,7 @@ function ProvenanceModal({ item, kind, docId, onClose }) {
   React.useEffect(() => {
     if (kind === 'chronology' && item) {
       setLoading(true);
-      fetch(`/api/docs/${encodeURIComponent(docId)}/claims/${encodeURIComponent(item.id)}`)
+      fetch(`/api/docs/${encodeURIComponent(docId)}/claims/${encodeURIComponent(item.id)}`, { headers: apiAuthHeaders() })
         .then(r => r.ok ? r.json() : null)
         .then(d => setData(d))
         .catch(() => setData(null))
@@ -628,9 +698,9 @@ function ChronologyArtifact({ docId, debugIds, status }) {
 
   const loadFeedback = React.useCallback(() => {
     if (!docId) return;
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/feedback')
+    fetch('/api/docs/' + encodeURIComponent(docId) + '/feedback', { headers: apiAuthHeaders() })
       .then(r => r.ok ? r.json() : null)
-      .then(data => setFeedback((data && Array.isArray(data.feedback)) ? data.feedback : []))
+      .then(data => setFeedback((data && Array.isArray(data.adjudications)) ? data.adjudications : []))
       .catch(() => setFeedback([]));
   }, [docId]);
 
@@ -640,9 +710,9 @@ function ChronologyArtifact({ docId, debugIds, status }) {
     setFeedback([]);
     setFeedbackOpen(false);
     setReprocessMsg('');
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/chronology')
+    fetch('/api/registers/' + encodeURIComponent(docId) + '?type=events&limit=1000', { headers: apiAuthHeaders() })
       .then(r => r.ok ? r.json() : null)
-      .then(data => setRows((data && data.claims) ? data.claims : []))
+      .then(data => setRows(registerRowsToEvents(data || { rows: [] })))
       .catch(() => setRows([]));
     loadFeedback();
   }, [docId, loadFeedback]);
@@ -670,16 +740,7 @@ function ChronologyArtifact({ docId, debugIds, status }) {
   };
 
   const requestReprocess = () => {
-    if (!docId) return;
-    setReprocessMsg('Queuing...');
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/feedback/reprocess', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('Reprocess request failed')))
-      .then(() => setReprocessMsg('Reprocess queued'))
-      .catch(err => setReprocessMsg(err.message || 'Reprocess failed'));
+    setReprocessMsg('Not available in this build');
   };
 
   const renderRow = (e, sectionKey) => {
@@ -836,12 +897,12 @@ function ChronologyArtifact({ docId, debugIds, status }) {
           {feedbackOpen && (
             <div className="lwa-feedback-list">
               {feedback.map((item, idx) => (
-                <div key={item.id || idx} className="lwa-feedback-item">
+                <div key={item.claim_id || item.id || idx} className="lwa-feedback-item">
                   <div>
-                    <span className="lwa-badge disputed">{item.feedback_type || item.issue_type || 'issue'}</span>
+                    <span className="lwa-badge disputed">{item.verdict || item.feedback_type || item.issue_type || 'issue'}</span>
                     <span style={{ marginLeft: 8, fontFamily: LW2.mono, color: LW2.ink3 }}>{item.severity || 'major'}</span>
                   </div>
-                  <div style={{ marginTop: 4 }}>{item.reviewer_comment || item.comment || 'No note'}</div>
+                  <div style={{ marginTop: 4 }}>{item.note || item.reviewer_comment || item.comment || 'No note'}</div>
                   {(item.claim_id || item.artifact_type) && (
                     <div style={{ marginTop: 3, fontFamily: LW2.mono, fontSize: 10.5, color: LW2.ink3 }}>
                       {item.artifact_type || 'chronology'} {item.claim_id ? '· ' + item.claim_id : ''}
@@ -912,9 +973,9 @@ function PeopleArtifact({ docId, debugIds, status }) {
     if (!docId) return;
     setRows(null);
     setStatusFilter(null);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/people')
+    fetch('/api/registers/' + encodeURIComponent(docId) + '?type=people&limit=500', { headers: apiAuthHeaders() })
       .then(r => r.ok ? r.json() : null)
-      .then(data => setRows((data && data.claims) ? data.claims : []))
+      .then(data => setRows(registerRowsToPeople(data || { rows: [] })))
       .catch(() => setRows([]));
   }, [docId]);
   const counts = statusCounts(rows || []);
@@ -1034,10 +1095,14 @@ function EntityArtifact({ docId, debugIds, status }) {
     if (!docId) return;
     setEntities(null);
     setStatusFilter(null);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/entities')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => setEntities((data && data.claims) ? data.claims : []))
-      .catch(() => setEntities([]));
+    Promise.all([
+      fetch(`/api/registers/${encodeURIComponent(docId)}?type=organisation&limit=500`, { headers: apiAuthHeaders() }).then(r => r.ok ? r.json() : { rows: [] }),
+      fetch(`/api/registers/${encodeURIComponent(docId)}?type=legislation&limit=500`, { headers: apiAuthHeaders() }).then(r => r.ok ? r.json() : { rows: [] }),
+      fetch(`/api/registers/${encodeURIComponent(docId)}?type=authority&limit=500`, { headers: apiAuthHeaders() }).then(r => r.ok ? r.json() : { rows: [] }),
+    ]).then(([org, leg, auth]) => {
+      const combined = [...(org.rows || []), ...(leg.rows || []), ...(auth.rows || [])];
+      setEntities(registerRowsToEntities({ rows: combined }));
+    }).catch(() => setEntities([]));
   }, [docId]);
   const statusTally = statusCounts(entities || []);
   const statusFiltered = entities === null ? null : (statusFilter ? entities.filter(e => artifactStatus(e) === statusFilter) : entities);
@@ -1173,9 +1238,12 @@ function DocRefsArtifact({ docId }) {
   React.useEffect(() => {
     if (!docId) return;
     setRefs(null);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/docrefs')
+    fetch('/api/registers/' + encodeURIComponent(docId) + '?type=document&limit=500', { headers: apiAuthHeaders() })
       .then(r => r.ok ? r.json() : null)
-      .then(data => { setRefs((data && data.claims) ? data.claims : []); })
+      .then(data => {
+        const rows = registerRowsToEntities(data || { rows: [] });
+        setRefs(rows.map(r => ({ ...r, title: r.name || r.canonical || r.id })));
+      })
       .catch(() => { setRefs([]); });
   }, [docId]);
   return (
@@ -1252,11 +1320,7 @@ function ExtRefsArtifact({ docId }) {
   ];
   React.useEffect(() => {
     if (!docId) return;
-    setExtrefs(null);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/extrefs')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => setExtrefs((data && data.claims) ? data.claims : []))
-      .catch(() => setExtrefs([]));
+    setExtrefs([]);
   }, [docId]);
   const rows = extrefs === null ? null : (filter === 'all' ? extrefs : extrefs.filter(r => r.kind === filter));
   return (
@@ -1284,7 +1348,7 @@ function ExtRefsArtifact({ docId }) {
         ))}
       </div>
       {rows === null && <div style={{ padding: '32px 24px', color: LW2.ink3, fontSize: 13, textAlign: 'center' }}>Loading…</div>}
-      {rows !== null && rows.length === 0 && <div style={{ padding: '32px 24px', color: LW2.ink3, fontSize: 13, textAlign: 'center' }}>No external references found for this document.</div>}
+      {rows !== null && rows.length === 0 && <div style={{ padding: '32px 24px', color: LW2.ink3, fontSize: 13, textAlign: 'center' }}>External references are not available in this build.</div>}
       {rows !== null && rows.length > 0 && <table className="lwa-tbl">
         <thead><tr>
           <th style={{ width: 360 }}>Citation</th>
@@ -1323,52 +1387,24 @@ function SynthesisArtifact({ docId, debugIds, status }) {
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [running, setRunning] = React.useState(false);
-  const [message, setMessage] = React.useState('');
+  const [message, setMessage] = React.useState('Synthesis is not available in this build (mock).');
 
   const load = React.useCallback(() => {
     if (!docId) return;
     setLoading(true);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/artifacts/synthesis-v1')
-      .then(r => r.ok ? r.json() : null)
-      .then(payload => {
-        setData(payload);
-        setMessage(payload ? '' : 'No synthesis run yet - click Run Synthesis');
-      })
-      .catch(() => {
-        setData(null);
-        setMessage('No synthesis run yet - click Run Synthesis');
-      })
-      .finally(() => setLoading(false));
+    setData(null);
+    setMessage('Synthesis is not available in this build (mock).');
+    setLoading(false);
   }, [docId]);
 
   React.useEffect(() => {
     setData(null);
-    setMessage('');
+    setMessage('Synthesis is not available in this build (mock).');
     load();
   }, [load]);
 
   const run = async () => {
-    if (!docId || running) return;
-    setRunning(true);
-    setMessage('Synthesis run queued...');
-    try {
-      const response = await fetch('/api/docs/' + encodeURIComponent(docId) + '/synthesis/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = payload.detail || payload;
-        throw new Error(detail.message || detail.code || response.statusText);
-      }
-      setMessage('Synthesis running...');
-      window.setTimeout(load, 5000);
-    } catch (err) {
-      setMessage('Synthesis run failed: ' + (err.message || String(err)));
-    } finally {
-      setRunning(false);
-    }
+    setMessage('Synthesis is not available in this build (mock).');
   };
 
   const sections = data && Array.isArray(data.sections) ? data.sections : [];
@@ -1405,7 +1441,7 @@ function SynthesisArtifact({ docId, debugIds, status }) {
     >
       <div className="lwa-frame-h">
         <div className="left">
-          <div className="lwa-eyebrow">Artifact 6 of 8 · synthesis</div>
+          <div className="lwa-eyebrow">Artifact 6 of 8 · synthesis · <span className="lwa-badge candidate">mock</span></div>
           <h2 className="lwa-title">Synthesis</h2>
           <div className="lwa-sub">
             {loading ? 'Loading...' : data ? `${narrativeSections.length} narrative sections · ${claims.length} key events and ${entities.length} key persons.` : (message || 'No synthesis run yet - click Run Synthesis')}
@@ -1508,27 +1544,15 @@ function CiteChip({ c, onCite }) {
 }
 
 function MemoArtifact({ onCite, docId }) {
-  const [memo, setMemo] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    setMemo(null);
-    setLoading(true);
-    if (!docId) { setLoading(false); return; }
-    let cancelled = false;
-    fetch(`/api/docs/${encodeURIComponent(docId)}/artifacts/memo`)
-      .then(r => r.json())
-      .then(d => { if (!cancelled) { setMemo(d); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setMemo(null); setLoading(false); } });
-    return () => { cancelled = true; };
-  }, [docId]);
+  const memo = null;
+  const loading = false;
 
   if (loading) return <div className="lwa-frame" style={{padding:24,color:LW2.ink3,fontFamily:LW2.mono,fontSize:12}}>Loading memo…</div>;
   if (!memo || !memo.issues || memo.issues.length === 0) {
     return (
       <div className="lwa-frame" style={{padding:24}}>
-        <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:12,marginBottom:8}}>Artifact 6 of 7 · Legal Memo</div>
-        <div style={{color:LW2.ink2,fontSize:13}}>Legal memo not yet generated for this document.</div>
+        <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:12,marginBottom:8}}>Artifact 6 of 7 · Legal Memo · <span className="lwa-badge candidate">mock</span></div>
+        <div style={{color:LW2.ink2,fontSize:13}}>Legal memo is not available in this build.</div>
         <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:11,marginTop:6}}>
           The LegalMemoGenerationAgent runs at the end of the pipeline. Re-run the document to generate this artifact.
         </div>
@@ -1683,11 +1707,8 @@ function MindMapArtifact({ docId }) {
   const [loading, setLoading] = React.useState(false);
   React.useEffect(() => {
     if (!docId) return;
-    setLoading(true);
-    fetch('/api/docs/' + encodeURIComponent(docId) + '/mindmap')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setData(null); setLoading(false); });
+    setLoading(false);
+    setData(null);
   }, [docId]);
 
   const panelId = tracePanelId('mindmap', docId);
@@ -1695,7 +1716,7 @@ function MindMapArtifact({ docId }) {
   if (!data || data.status === 'not_yet_built' || !data.nodes || data.nodes.length === 0) {
     return (
       <div data-panel-id={panelId} style={{ padding: 32, color: '#888', fontStyle: 'italic' }}>
-        Mind map not yet available — run the chronology pipeline to generate.
+        Mind map is not available in this build.
       </div>
     );
   }
@@ -1745,7 +1766,7 @@ function ArtifactBody({ tab, onCite, docId, debugIds }) {
   React.useEffect(() => {
     setStatus(null);
     if (!docId) return;
-    fetch('/api/status/' + encodeURIComponent(docId))
+    fetch('/api/status/' + encodeURIComponent(docId), { headers: apiAuthHeaders() })
       .then(r => r.ok ? r.json() : null)
       .then(data => setStatus(data || null))
       .catch(() => setStatus(null));
