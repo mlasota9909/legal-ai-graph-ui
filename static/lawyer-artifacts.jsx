@@ -1544,71 +1544,80 @@ function CiteChip({ c, onCite }) {
 }
 
 function MemoArtifact({ onCite, docId }) {
-  const memo = null;
-  const loading = false;
+  const [summary, setSummary] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
 
-  if (loading) return <div className="lwa-frame" style={{padding:24,color:LW2.ink3,fontFamily:LW2.mono,fontSize:12}}>Loading memo…</div>;
-  if (!memo || !memo.issues || memo.issues.length === 0) {
+  React.useEffect(() => {
+    if (!docId) { setLoading(false); return; }
+    setLoading(true);
+    setSummary(null);
+    fetch('/api/docs/' + encodeURIComponent(docId) + '/summary', { headers: apiAuthHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { setSummary(data || null); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [docId]);
+
+  if (loading) return <div className="lwa-frame" style={{padding:24,color:LW2.ink3,fontFamily:LW2.mono,fontSize:12}}>Loading summary…</div>;
+  if (!summary) {
     return (
       <div className="lwa-frame" style={{padding:24}}>
-        <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:12,marginBottom:8}}>Artifact 6 of 7 · Legal Memo · <span className="lwa-badge candidate">mock</span></div>
-        <div style={{color:LW2.ink2,fontSize:13}}>Legal memo is not available in this build.</div>
-        <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:11,marginTop:6}}>
-          The LegalMemoGenerationAgent runs at the end of the pipeline. Re-run the document to generate this artifact.
-        </div>
+        <div style={{color:LW2.ink3,fontFamily:LW2.mono,fontSize:12,marginBottom:8}}>Legal Memo · <span className="lwa-badge">not available</span></div>
+        <div style={{color:LW2.ink2,fontSize:13}}>Summary not available for this document.</div>
       </div>
     );
   }
 
-  const m = memo;
+  const pageRefs = (provenance) => {
+    const pages = [...new Set((provenance || []).map(p => p.page_start).filter(p => p != null))].sort((a, b) => a - b);
+    if (pages.length === 0) return null;
+    return (
+      <div className="lwa-memo-cites">
+        {pages.slice(0, 8).map(p => (
+          <span key={p} className="lwa-memo-cite"><span className="a">p.</span>{p}</span>
+        ))}
+        {pages.length > 8 && <span className="lwa-memo-cite">+{pages.length - 8}</span>}
+      </div>
+    );
+  };
+
   return (
     <div className="lwa-frame">
-      <div className="lwa-frame-actions"><ExportMenu scope="memo" /></div>
       <div className="lwa-memo">
         <div className="lwa-memo-hd">
-          <div className="e">Artifact 6 of 7 · report · drafted to junior-lawyer quality</div>
-          <h2 className="lwa-serif">Memorandum of advice — {m.matter}</h2>
+          <div className="e">Graph-grounded summary</div>
+          <h2 className="lwa-serif">Document Summary</h2>
           <div className="meta">
-            <span>Drafted <b>{m.drafted}</b></span>
-            <span>·</span>
-            <span>by <b>{m.drafter}</b></span>
-            <span>·</span>
-            <span>Composite confidence <b>{(m.confidence||0).toFixed(2)}</b></span>
-            {m.flagged > 0 && <>
-              <span>·</span>
-              <span style={{ color: LW2.warn }}><b style={{ color: LW2.warn }}>{m.flagged} issues</b> with unresolved dissent</span>
-            </>}
+            <span><b>{summary.sections.length}</b> sections</span>
+            {summary.recommendations && <><span>·</span><span><b>{summary.recommendations.length}</b> recommendations</span></>}
+            <span style={{fontFamily:LW2.mono,fontSize:10,background:'#D7E5E2',color:'#1A5C52',padding:'2px 7px',borderRadius:99,marginLeft:4}}>{summary.data_source}</span>
           </div>
-          {m.executive_summary && (
-            <div style={{marginTop:10,padding:'8px 12px',background:LW2.panelDim,borderRadius:6,
-              fontSize:12.5,color:LW2.ink2,fontStyle:'italic',lineHeight:1.5}}>
-              {m.executive_summary}
-            </div>
-          )}
         </div>
-        {(m.issues || []).map(i => (
-          <div key={i.n} className="lwa-issue">
-            <h3>Issue {i.n}</h3>
-            <h4>{i.heading}</h4>
-            <dl className="lwa-irac">
-              <dt>Issue</dt>            <dd>{i.irac && i.irac.issue}</dd>
-              <dt>Rule</dt>             <dd>{i.irac && i.irac.rule}</dd>
-              <dt>Application</dt>      <dd>{i.irac && i.irac.application}</dd>
-              <dt>Conclusion</dt>       <dd>{i.irac && i.irac.conclusion}</dd>
-            </dl>
-            {i.dissent && (
-              <div className="lwa-memo-flag">
-                <b>Dissent</b> {i.dissent.note}
-                {i.dissent.conf != null && <span style={{ marginLeft: 8, fontFamily: LW2.mono }}>(conf {(i.dissent.conf||0).toFixed(2)})</span>}
-              </div>
-            )}
-            {(i.cites || []).length > 0 && (
-              <div className="lwa-memo-cites">
-                {(i.cites || []).map((c, idx) => <CiteChip key={idx} c={c} onCite={onCite} />)}
-              </div>
-            )}
+        <div className="lwa-issue">
+          <h3>Overview</h3>
+          <p style={{fontSize:14,lineHeight:1.65,color:LW2.ink}}>{summary.overview.text}</p>
+          {pageRefs(summary.overview.provenance)}
+        </div>
+        {(summary.sections || []).map((section, i) => (
+          <div key={i} className="lwa-issue">
+            <h3>{section.title}</h3>
+            <p style={{fontSize:13,lineHeight:1.65,color:LW2.ink}}>{section.text}</p>
+            {pageRefs(section.provenance)}
           </div>
         ))}
+        {summary.recommendations && summary.recommendations.length > 0 && (
+          <div className="lwa-issue">
+            <h3>Recommendations ({summary.recommendations.length})</h3>
+            {summary.recommendations.slice(0, 5).map((rec, i) => (
+              <div key={i} className="lwa-memo-flag" style={{marginBottom:8}}>
+                <span>{rec.rec_text}</span>
+                {rec.rec_page != null && <span style={{fontFamily:LW2.mono,fontSize:11,marginLeft:8}}>p.{rec.rec_page}</span>}
+              </div>
+            ))}
+            {summary.recommendations.length > 5 && (
+              <p style={{fontSize:11,color:LW2.ink3}}>+ {summary.recommendations.length - 5} more</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import type {
   RegisterRow,
   RegisterType,
   RunKpi,
+  SummaryResponse,
   WorkspaceData,
 } from '../types/contracts'
 import type { ListStatusFilter } from '../types/listFilter'
@@ -257,6 +258,11 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
           }
         : prev.agreement.entity,
     },
+    augmentation: {
+      ...prev.augmentation,
+      ...(gc?.external_sources != null ? { externalSources: gc.external_sources } : {}),
+      ...(gc?.evidenced_by_external_edges != null ? { evidencedByExternalEdges: gc.evidenced_by_external_edges } : {}),
+    },
     artifacts: prev.artifacts.map((artifact) => {
       if (artifact.id === 'chronology' && chronologyCount != null) {
         return { ...artifact, count: chronologyCount, accepted: chronologyCount, disputed: 0, superseded: 0 }
@@ -379,6 +385,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     signals: mockData.signals,
     activity: mockData.activity.map((row) => ({ ...row, dataSource: 'mock' })),
     reports: mockData.reports,
+    summary: null,
     augmentation: mockData.augmentation,
     hardware: mockData.hardware,
   }))
@@ -529,6 +536,18 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
         hasRealActivity.current = true
         const realEvents = payload.events.map((e) => ({ ...e, dataSource: 'real' as const }))
         setData((prev) => ({ ...prev, activity: realEvents }))
+      })
+      .catch(() => undefined)
+  }, [docId])
+
+  useEffect(() => {
+    if (!docId) return
+    const headers = authHeaders()
+    fetch(`/api/docs/${encodeURIComponent(docId)}/summary`, { headers })
+      .then((r) => (r.ok ? (r.json() as Promise<SummaryResponse>) : null))
+      .then((payload) => {
+        if (!payload) return
+        setData((prev) => ({ ...prev, summary: payload }))
       })
       .catch(() => undefined)
   }, [docId])

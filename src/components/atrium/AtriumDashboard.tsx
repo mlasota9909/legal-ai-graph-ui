@@ -16,6 +16,7 @@ import { useNav } from '../../context/NavContext'
 import { ReasoningPopover } from '../ReasoningPopover'
 import { ArtifactListHeader } from './ArtifactListHeader'
 import { ExportMenu } from './ExportMenu'
+import { SummaryPanel } from './SummaryPanel'
 import {
   exportChronologyCsv,
   exportChronologyWord,
@@ -832,7 +833,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           )}
           {activeTab === 'entities' && <EntityList rows={filteredEntities} highlight={highlight} showFieldIds={showFieldIds} />}
           {activeTab === 'people' && <PeopleList rows={filteredPeople} highlight={highlight} showFieldIds={showFieldIds} />}
-          {activeTab === 'exec' && <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />}
+          {activeTab === 'exec' && (
+            data.summary ? <SummaryPanel summary={data.summary} /> : <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />
+          )}
           {activeTab === 'detailed' && <ReportView sections={data.reports.detailed} reasoningLookup={reasoningLookup} />}
         </div>
 
@@ -854,33 +857,45 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
               External augmentation
             </div>
             <div className="divide-y divide-[var(--rule-soft)]">
+              {data.augmentation.externalSources != null && (
+                <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                  <span>External source nodes<SourceDot source="real" show={showSources} /></span>
+                  <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.externalSources}</span>
+                </div>
+              )}
+              {data.augmentation.evidencedByExternalEdges != null && (
+                <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                  <span>Evidence edges to external<SourceDot source="real" show={showSources} /></span>
+                  <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.evidencedByExternalEdges}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>eyecite citations tagged<SourceDot source="mock" show={showSources} /></span>
+                <span>eyecite citations tagged<SourceDot source="simulated" show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.eyeciteCitations}</span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>AustLII statutes verified<SourceDot source="mock" show={showSources} /></span>
+                <span>AustLII statutes verified<SourceDot source="simulated" show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
                   {data.augmentation.austlii.verified}
                   <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.austlii.total}</small>
                 </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>ASIC entities confirmed<SourceDot source="mock" show={showSources} /></span>
+                <span>ASIC entities confirmed<SourceDot source="simulated" show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
                   {data.augmentation.asic.confirmed}
                   <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.asic.total}</small>
                 </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>Companies House (UK)<SourceDot source="mock" show={showSources} /></span>
+                <span>Companies House (UK)<SourceDot source="simulated" show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
                   {data.augmentation.companiesHouse.confirmed}
                   <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.companiesHouse.total}</small>
                 </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>CourtListener / EDGAR<SourceDot source="mock" show={showSources} /></span>
+                <span>CourtListener / EDGAR<SourceDot source="simulated" show={showSources} /></span>
                 <span className="font-mono text-[var(--ink)]">{data.augmentation.edgar == null ? '—' : data.augmentation.edgar}</span>
               </div>
             </div>

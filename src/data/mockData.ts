@@ -836,6 +836,8 @@ const augmentation: AugmentationStatus = {
   companiesHouse: { confirmed: 0, total: 0 },
   edgar: null,
   courtListener: null,
+  externalSources: null,
+  evidencedByExternalEdges: null,
 }
 
 const hardware: HardwareSnapshot = {

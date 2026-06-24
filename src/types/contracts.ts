@@ -428,6 +428,38 @@ export interface AugmentationStatus {
   companiesHouse: { confirmed: number; total: number }
   edgar: number | null
   courtListener: number | null
+  externalSources: number | null
+  evidencedByExternalEdges: number | null
+}
+
+export interface SummaryProvenance {
+  node_id: string
+  labels: string[]
+  source_chunk_id: string
+  page_start: number | null
+  edge_ids: string[]
+  linked_node_ids: string[]
+}
+
+export interface SummarySection {
+  title: string
+  text: string
+  provenance: SummaryProvenance[]
+}
+
+export interface SummaryRecommendation {
+  rec_text?: string | null
+  rec_page?: number | null
+  orgs?: string[] | null
+  findings?: { page: number; text: string }[] | null
+}
+
+export interface SummaryResponse {
+  document_id?: string | null
+  data_source: string
+  overview: { text: string; provenance: SummaryProvenance[] }
+  sections: SummarySection[]
+  recommendations: SummaryRecommendation[] | null
 }
 
 export interface HardwareSnapshot {
@@ -462,6 +494,7 @@ export interface WorkspaceData {
     exec: ReportSection[]
     detailed: ReportSection[]
   }
+  summary: SummaryResponse | null
   augmentation: AugmentationStatus
   hardware: HardwareSnapshot
 }
