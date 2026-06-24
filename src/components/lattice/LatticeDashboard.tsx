@@ -165,14 +165,14 @@ function KpiCell({ label, value, delta, tone, source = 'mock' }: { label: string
 
 function AgreementColumn({ label, item, source = 'mock' }: { label: string; item: AgreementItem; source?: DataSource }) {
   const nav = useNav()
-  const ok = item.jaccard >= item.gate
+  const ok = item.jaccard != null && item.jaccard >= item.gate
   return (
     <div className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
         {label}<SourceDot source={source} show={nav?.showSources ?? false} />
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <span className="font-mono text-[20px] font-semibold text-[var(--ink)]">{item.jaccard.toFixed(2)}</span>
+        <span className="font-mono text-[20px] font-semibold text-[var(--ink)]">{item.jaccard != null ? item.jaccard.toFixed(2) : "n/a"}</span>
         <span
           className={`rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.04em] ${
             ok ? 'bg-[var(--good-soft)] text-[var(--good)]' : 'bg-[var(--warn-soft)] text-[var(--warn)]'
@@ -184,7 +184,7 @@ function AgreementColumn({ label, item, source = 'mock' }: { label: string; item
       <div className="relative mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
         <div
           className={`absolute inset-y-0 left-0 rounded-full ${ok ? 'bg-[var(--good)]' : 'bg-[var(--warn)]'}`}
-          style={{ width: `${item.jaccard * 100}%` }}
+          style={{ width: `${(item.jaccard ?? 0) * 100}%` }}
         />
         <div className="absolute -top-0.5 h-2 w-px bg-[var(--ink-2)]" style={{ left: `${item.gate * 100}%` }} />
       </div>

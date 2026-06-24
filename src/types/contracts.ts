@@ -88,7 +88,7 @@ export interface RunState {
 }
 
 export interface AgreementItem {
-  jaccard: number
+  jaccard: number | null
   /** Agreement gate threshold (e.g. 0.85). */
   gate: number
   claims: number
