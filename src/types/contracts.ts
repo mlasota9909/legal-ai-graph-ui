@@ -291,6 +291,9 @@ export interface KpiMetrics {
   jaccard: number | null
   jaccard_data_source: string
   jaccard_definition?: string | null
+  claims_disputed?: number | null
+  claims_disputed_data_source?: string | null
+  claims_disputed_definition?: string | null
 }
 
 export type GraphEdgeKind = 'entity' | 'provenance' | 'all'
@@ -380,6 +383,12 @@ export interface ActivityEvent {
   entityId?: string
   artifactType?: ArtifactType
   dataSource?: 'real' | 'mock' | 'simulated'
+}
+
+export interface ActivityStreamResponse {
+  document_id: string
+  events: ActivityEvent[]
+  data_source: string
 }
 
 export interface CrossArtifactSignal {

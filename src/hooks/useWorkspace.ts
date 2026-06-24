@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { activitySeed, mockData, runKpiSeed } from '../data/mockData'
 import type {
   ActivityEvent,
+  ActivityStreamResponse,
   ArtifactView,
   ChronologyClaim,
   EntityRow,
@@ -71,6 +72,9 @@ interface StatusDocument {
     jaccard: number | null
     jaccard_data_source: string
     jaccard_definition?: string | null
+    claims_disputed?: number | null
+    claims_disputed_data_source?: string | null
+    claims_disputed_definition?: string | null
   } | null
 }
 
@@ -144,13 +148,17 @@ function bumpKpi(kpi: RunKpi, event: ActivityEvent): RunKpi {
   return next
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+function authHeaders(): HeadersInit {
   const token = localStorage.getItem('legal_ai_token')
   const headers: HeadersInit = {}
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
-  const response = await fetch(url, { headers })
+  return headers
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { headers: authHeaders() })
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
   return (await response.json()) as T
 }
@@ -220,6 +228,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
       ...(claimsTotal != null ? { claimsTotal, claimsAccepted: claimsTotal, claimsDisputed: 0 } : {}),
       ...(status.kpi_metrics?.open_conflicts != null ? { openConflicts: status.kpi_metrics.open_conflicts } : {}),
       ...(status.kpi_metrics?.human_queue != null ? { humanQueue: status.kpi_metrics.human_queue } : {}),
+      ...(status.kpi_metrics?.claims_disputed != null ? { claimsDisputed: status.kpi_metrics.claims_disputed } : {}),
     },
     agreement: {
       ...prev.agreement,
@@ -377,6 +386,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     connected: true,
     events: [],
   })
+  const hasRealActivity = useRef(false)
 
   const selectRun = useCallback((documentId: string) => {
     setDocId(documentId)
@@ -510,8 +520,23 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   }, [docId])
 
   useEffect(() => {
+    hasRealActivity.current = false
+    const headers = authHeaders()
+    fetch(`/api/docs/${encodeURIComponent(docId)}/activity`, { headers })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((payload: ActivityStreamResponse | null) => {
+        if (!payload || payload.data_source !== 'real') return
+        hasRealActivity.current = true
+        const realEvents = payload.events.map((e) => ({ ...e, dataSource: 'real' as const }))
+        setData((prev) => ({ ...prev, activity: realEvents }))
+      })
+      .catch(() => undefined)
+  }, [docId])
+
+  useEffect(() => {
     let index = 0
     const timer = window.setInterval(() => {
+      if (hasRealActivity.current) return
       const base = activitySeed[index % activitySeed.length]
       index += 1
       const next: ActivityEvent = { ...base, t: formatTime(), dataSource: 'simulated' }
