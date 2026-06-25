@@ -6,7 +6,9 @@ import type {
   ArtifactView,
   ChronologyClaim,
   EntityRow,
+  FleetResponse,
   PersonRow,
+  PipelineResponse,
   PipelineState,
   RegisterResponse,
   RegisterRow,
@@ -45,6 +47,7 @@ interface GraphCounts {
   supported_by_edges?: number | null
   evidenced_by_external_edges?: number | null
   external_sources?: number | null
+  external_sources_by_source?: Record<string, number> | null
   upload_ts?: string | null
   data_source?: string | null
 }
@@ -262,6 +265,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
       ...prev.augmentation,
       ...(gc?.external_sources != null ? { externalSources: gc.external_sources } : {}),
       ...(gc?.evidenced_by_external_edges != null ? { evidencedByExternalEdges: gc.evidenced_by_external_edges } : {}),
+      externalSourcesBySource: gc?.external_sources_by_source ?? {},
     },
     artifacts: prev.artifacts.map((artifact) => {
       if (artifact.id === 'chronology' && chronologyCount != null) {
@@ -386,7 +390,9 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     activity: mockData.activity.map((row) => ({ ...row, dataSource: 'mock' })),
     reports: mockData.reports,
     summary: null,
-    augmentation: mockData.augmentation,
+    augmentation: { ...mockData.augmentation, externalSourcesBySource: {} },
+    pipeline: null,
+    fleet: null,
     hardware: mockData.hardware,
   }))
   const [streaming, setStreaming] = useState<{ connected: boolean; events: ActivityEvent[] }>({
@@ -559,6 +565,39 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       })
       .catch(() => undefined)
   }, [docId])
+
+  useEffect(() => {
+    if (!docId) return
+    const headers = authHeaders()
+    fetch(`/api/docs/${encodeURIComponent(docId)}/pipeline`, { headers })
+      .then((r) => (r.ok ? (r.json() as Promise<PipelineResponse>) : null))
+      .then((payload: PipelineResponse | null) => {
+        if (!payload) {
+          setData((prev) => ({ ...prev, pipeline: null }))
+          return
+        }
+        setData((prev) => ({ ...prev, pipeline: payload }))
+      })
+      .catch(() => {
+        setData((prev) => ({ ...prev, pipeline: null }))
+      })
+  }, [docId])
+
+  useEffect(() => {
+    const headers = authHeaders()
+    fetch('/api/fleet', { headers })
+      .then((r) => (r.ok ? (r.json() as Promise<FleetResponse>) : null))
+      .then((payload: FleetResponse | null) => {
+        if (!payload) {
+          setData((prev) => ({ ...prev, fleet: null }))
+          return
+        }
+        setData((prev) => ({ ...prev, fleet: payload }))
+      })
+      .catch(() => {
+        setData((prev) => ({ ...prev, fleet: null }))
+      })
+  }, [])
 
   useEffect(() => {
     let index = 0

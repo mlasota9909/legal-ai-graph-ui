@@ -421,6 +421,11 @@ export interface ArtifactSummary {
   outline?: { h: string; state: 'drafted' | 'drafting' | 'queued' | 'gated' }[]
 }
 
+export interface DocumentCounts {
+  external_sources: number
+  external_sources_by_source: Record<string, number>
+}
+
 export interface AugmentationStatus {
   eyeciteCitations: number
   austlii: { verified: number; total: number }
@@ -430,6 +435,7 @@ export interface AugmentationStatus {
   courtListener: number | null
   externalSources: number | null
   evidencedByExternalEdges: number | null
+  externalSourcesBySource: Record<string, number>
 }
 
 export interface SummaryProvenance {
@@ -460,6 +466,40 @@ export interface SummaryResponse {
   overview: { text: string; provenance: SummaryProvenance[] }
   sections: SummarySection[]
   recommendations: SummaryRecommendation[] | null
+}
+
+export interface PipelineStageCount { [key: string]: number }
+
+export interface PipelineStage {
+  stage: number
+  name: string
+  status: 'not_started' | 'completed' | 'unavailable'
+  progress_pct: number
+  counts: PipelineStageCount
+  detail: string
+  data_source: string
+}
+
+export interface PipelineResponse {
+  document_id: string
+  namespace: string
+  data_source: string
+  stages: PipelineStage[]
+}
+
+export interface FleetHost {
+  name: string
+  base_url: string
+  model: string
+  up: boolean
+  running: number | null
+  waiting: number | null
+  gpu_cache_pct: number | null
+}
+
+export interface FleetResponse {
+  data_source: string
+  hosts: FleetHost[]
 }
 
 export interface HardwareSnapshot {
@@ -496,6 +536,8 @@ export interface WorkspaceData {
   }
   summary: SummaryResponse | null
   augmentation: AugmentationStatus
+  pipeline: PipelineResponse | null
+  fleet: FleetResponse | null
   hardware: HardwareSnapshot
 }
 

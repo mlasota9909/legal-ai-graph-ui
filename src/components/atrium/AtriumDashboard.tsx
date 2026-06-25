@@ -721,7 +721,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           <div className="rounded-[14px] border border-[var(--rule)] bg-[var(--panel)] px-5 py-4 shadow-[0_1px_0_var(--rule-soft)]">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Pipelines</div>
             <div className="mt-3 space-y-3">
-              {data.pipelines.map((pipe) => (
+              {data.pipelines.map((pipe) => {
+                const pipelineStage = data.pipeline?.stages.find((s) => s.stage === pipe.id)
+                return (
                 <div key={pipe.id} className="border-b border-[var(--rule-soft)] pb-3 last:border-b-0 last:pb-0">
                   <div className="flex items-baseline justify-between gap-2">
                     <div className="text-[12px] font-medium text-[var(--ink)]">
@@ -736,8 +738,12 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                     </div>
                     <span className="font-mono text-[11px] text-[var(--ink-2)]">{(pipe.progress * 100).toFixed(0)}%<SourceDot source={pipe.progressSource ?? 'mock'} show={showSources} /></span>
                   </div>
+                  {pipelineStage && (
+                    <div className="mt-1 text-[10px] text-[var(--ink-3)] font-mono">{pipelineStage.detail}</div>
+                  )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         </div>
@@ -920,20 +926,20 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                 </div>
               )}
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>eyecite citations tagged<SourceDot source="simulated" show={showSources} /></span>
-                <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.eyeciteCitations}</span>
+                <span>eyecite citations tagged<SourceDot source={'eyecite' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
+                <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.externalSourcesBySource['eyecite'] ?? data.augmentation.eyeciteCitations}</span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>AustLII statutes verified<SourceDot source="simulated" show={showSources} /></span>
+                <span>AustLII statutes verified<SourceDot source={'austlii' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.austlii.verified}
+                  {data.augmentation.externalSourcesBySource['austlii'] ?? data.augmentation.austlii.verified}
                   <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.austlii.total}</small>
                 </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>ASIC entities confirmed<SourceDot source="simulated" show={showSources} /></span>
+                <span>ASIC entities confirmed<SourceDot source={'asic' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.asic.confirmed}
+                  {data.augmentation.externalSourcesBySource['asic'] ?? data.augmentation.asic.confirmed}
                   <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.asic.total}</small>
                 </span>
               </div>

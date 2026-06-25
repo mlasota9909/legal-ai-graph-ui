@@ -852,25 +852,60 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Hardware</h3>
             </div>
             <div className="grid grid-cols-2">
-              {data.hardware.hosts.map((host) => {
-                const util = host.vramPct ?? host.ramPct ?? 0
-                const utilLabel = host.vramPct != null ? 'VRAM' : 'RAM'
-                return (
-                  <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
-                    <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
-                      {host.label}<SourceDot source="mock" show={showSources} />
-                    </div>
-                    <div className="mt-1 flex items-baseline gap-2 font-mono text-[12px] text-[var(--ink)]">
-                      <span className="font-semibold">{util}%</span>
-                      <span className="text-[10px] text-[var(--ink-3)]">{utilLabel}</span>
-                    </div>
-                    <div className="mt-1 text-[10px] text-[var(--ink-3)]">{host.role}</div>
-                    <div className="mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
-                      <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${util}%` }} />
-                    </div>
-                  </div>
-                )
-              })}
+              {data.fleet
+                ? data.fleet.hosts.map((host) => {
+                    return (
+                      <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
+                        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
+                          {host.name}
+                          {!host.up && <span className="ml-1 text-[var(--bad)]">down</span>}
+                          <SourceDot source="real" show={showSources} />
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">{host.model}</div>
+                        {host.up ? (
+                          <>
+                            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px] text-[var(--ink)]">
+                              {host.running != null && <span>{host.running} running</span>}
+                              {host.waiting != null && <span>{host.waiting} waiting</span>}
+                            </div>
+                            {host.gpu_cache_pct != null && (
+                              <div className="mt-2">
+                                <div className="mb-0.5 flex justify-between font-mono text-[9px] text-[var(--ink-3)]">
+                                  <span>GPU cache</span>
+                                  <span>{host.gpu_cache_pct}%</span>
+                                </div>
+                                <div className="h-1 rounded-full bg-[var(--rule-soft)]">
+                                  <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${host.gpu_cache_pct}%` }} />
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="mt-1 font-mono text-[11px] text-[var(--ink-3)]">—</div>
+                        )}
+                      </div>
+                    )
+                  })
+                : data.hardware.hosts.map((host) => {
+                    const util = host.vramPct ?? host.ramPct ?? 0
+                    const utilLabel = host.vramPct != null ? 'VRAM' : 'RAM'
+                    return (
+                      <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
+                        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
+                          {host.label}<SourceDot source="mock" show={showSources} />
+                        </div>
+                        <div className="mt-1 flex items-baseline gap-2 font-mono text-[12px] text-[var(--ink)]">
+                          <span className="font-semibold">{util}%</span>
+                          <span className="text-[10px] text-[var(--ink-3)]">{utilLabel}</span>
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">{host.role}</div>
+                        <div className="mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
+                          <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${util}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })
+              }
             </div>
           </div>
         </div>

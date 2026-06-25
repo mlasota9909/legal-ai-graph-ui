@@ -838,6 +838,7 @@ const augmentation: AugmentationStatus = {
   courtListener: null,
   externalSources: null,
   evidencedByExternalEdges: null,
+  externalSourcesBySource: {},
 }
 
 const hardware: HardwareSnapshot = {
