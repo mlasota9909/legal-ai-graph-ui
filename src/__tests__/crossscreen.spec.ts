@@ -1,3 +1,4 @@
+// Cross-screen reconciliation tests — 19 tests
 import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
