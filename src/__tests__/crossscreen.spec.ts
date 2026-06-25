@@ -1,4 +1,4 @@
-// Cross-screen reconciliation tests — 19 tests
+// Cross-screen reconciliation tests — 20 tests
 import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -537,4 +537,42 @@ test('summary endpoint returns real data_source', async ({ page }) => {
 
   const resp = await summaryResp
   expect(resp.ok()).toBeTruthy()
+})
+
+test('executive memo tab renders real summary text, not loading state', async ({ page }) => {
+  // Step 1: Navigate to home and wait for real document
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+  expect(REAL_DOC_IDS).toContain(docId)
+
+  // Step 2: Set up response capture for /api/docs/{docId}/summary BEFORE navigation
+  const summaryResp = page.waitForResponse(
+    async (resp) => {
+      if (!resp.url().includes(`/api/docs/${docId}/summary`)) return false
+      if (!resp.ok()) return false
+      try {
+        const data = await resp.json()
+        return data?.data_source === 'real'
+      } catch {
+        return false
+      }
+    },
+    { timeout: 20000 },
+  )
+
+  // Step 3: Navigate to exec tab
+  await page.goto(`/runs/${docId}/exec`)
+
+  // Step 4: Wait for summary API response to complete
+  const resp = await summaryResp
+  expect(resp.ok()).toBeTruthy()
+
+  // Step 5: Wait for the overview <p> to be visible — SummaryPanel uses divs not sections
+  const summaryParagraph = page.locator('p').filter({ hasText: /.{50,}/ }).first()
+  await expect(summaryParagraph).toBeVisible({ timeout: 10000 })
+
+  // Step 6: Assert the text does not contain 'Loading'
+  const paragraphText = await summaryParagraph.innerText()
+  expect(paragraphText).not.toContain('Loading')
+  expect(paragraphText.length).toBeGreaterThan(50)
 })
