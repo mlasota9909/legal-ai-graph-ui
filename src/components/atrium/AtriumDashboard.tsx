@@ -61,6 +61,15 @@ interface AtriumDashboardProps {
   initialTab?: ArtifactView
 }
 
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem('legal_ai_token')
+  const headers: HeadersInit = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
+}
+
 function findArtifact(artifacts: ArtifactSummary[], id: ArtifactView): ArtifactSummary | null {
   return artifacts.find((artifact) => artifact.id === id) ?? null
 }
@@ -457,6 +466,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const [localTab, setLocalTab] = useState<ArtifactView>(initialTab)
   const [localListFilter, setLocalListFilter] = useState<ListStatusFilter>('all')
   const [showFieldIds, setShowFieldIds] = useState(false)
+  const [exportingHtml, setExportingHtml] = useState(false)
   const activeTab = nav ? (view ?? nav.view) : localTab
   const highlight = nav?.highlight ?? null
   const listFilter = nav?.listFilter ?? localListFilter
@@ -515,6 +525,34 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
       setFeedbackSubmitting(false)
     }
   }, [selectedClaim, nav?.docId, feedbackVerdict, feedbackNote])
+
+  const handleExportHtml = useCallback(async () => {
+    const docId = nav?.docId ?? data.doc.id
+    setExportingHtml(true)
+    try {
+      type ExportHtmlResponse = { html: string; document_id: string; data_source: string }
+      const response = await fetch(
+        `/api/docs/${encodeURIComponent(docId)}/export/html`,
+        { headers: authHeaders() }
+      )
+      if (!response.ok) {
+        console.error('Export HTML failed:', response.status, response.statusText)
+        return
+      }
+      const result = (await response.json()) as ExportHtmlResponse
+      if (!result.html) {
+        console.error('Export HTML response missing html field', result)
+        return
+      }
+      const blob = new Blob([result.html], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
+    } catch (err) {
+      console.error('Export HTML failed:', err)
+    } finally {
+      setExportingHtml(false)
+    }
+  }, [nav?.docId, data.doc.id])
 
   const artifact = findArtifact(data.artifacts, activeTab) ?? data.artifacts[0]
   const isListArtifact = artifact?.kind === 'list'
@@ -741,6 +779,16 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                 )}
               </button>
             ))}
+            {activeTab === 'exec' && data.summary && (
+              <button
+                type="button"
+                disabled={exportingHtml}
+                onClick={() => void handleExportHtml()}
+                className="ml-auto shrink-0 rounded border border-[var(--rule)] px-3 py-1 font-mono text-[11px] text-[var(--ink-3)] hover:bg-[var(--rule-soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {exportingHtml ? 'Exporting…' : 'Export HTML'}
+              </button>
+            )}
           </div>
 
           <div className="border-b border-[var(--rule-soft)] px-6 py-5">
@@ -836,7 +884,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           {activeTab === 'exec' && (
             data.summary ? <SummaryPanel summary={data.summary} /> : <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />
           )}
-          {activeTab === 'detailed' && <ReportView sections={data.reports.detailed} reasoningLookup={reasoningLookup} />}
+          {activeTab === 'detailed' && (
+            data.summary ? <SummaryPanel summary={data.summary} /> : <ReportView sections={data.reports.detailed} reasoningLookup={reasoningLookup} />
+          )}
         </div>
 
         <div className="flex flex-col gap-4">
