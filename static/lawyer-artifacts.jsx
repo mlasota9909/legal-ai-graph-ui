@@ -1582,6 +1582,24 @@ function MemoArtifact({ onCite, docId }) {
 
   return (
     <div className="lwa-frame">
+      <div style={{padding:'10px 16px 0',display:'flex',justifyContent:'flex-end'}}>
+        <button
+          className="lw-btn"
+          style={{fontSize:11,padding:'4px 12px'}}
+          onClick={() => {
+            fetch('/api/docs/' + encodeURIComponent(docId) + '/export/html', { headers: apiAuthHeaders() })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                if (!data?.html) return
+                const blob = new Blob([data.html], { type: 'text/html' })
+                window.open(URL.createObjectURL(blob), '_blank')
+              })
+              .catch(() => {})
+          }}
+        >
+          Export HTML ↗
+        </button>
+      </div>
       <div className="lwa-memo">
         <div className="lwa-memo-hd">
           <div className="e">Graph-grounded summary</div>

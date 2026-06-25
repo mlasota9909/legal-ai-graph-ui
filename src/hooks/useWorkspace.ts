@@ -545,9 +545,17 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(docId)}/summary`, { headers })
       .then((r) => (r.ok ? (r.json() as Promise<SummaryResponse>) : null))
-      .then((payload) => {
+      .then((payload: SummaryResponse | null) => {
         if (!payload) return
-        setData((prev) => ({ ...prev, summary: payload }))
+        setData((prev) => ({
+          ...prev,
+          summary: payload,
+          artifacts: prev.artifacts.map((a) =>
+            a.id === 'exec' || a.id === 'detailed'
+              ? { ...a, sections: payload.sections.length }
+              : a,
+          ),
+        }))
       })
       .catch(() => undefined)
   }, [docId])

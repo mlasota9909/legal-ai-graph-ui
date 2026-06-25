@@ -882,7 +882,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           {activeTab === 'entities' && <EntityList rows={filteredEntities} highlight={highlight} showFieldIds={showFieldIds} />}
           {activeTab === 'people' && <PeopleList rows={filteredPeople} highlight={highlight} showFieldIds={showFieldIds} />}
           {activeTab === 'exec' && (
-            data.summary ? <SummaryPanel summary={data.summary} /> : <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />
+            data.summary ? <SummaryPanel summary={data.summary} variant="compact" /> : <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />
           )}
           {activeTab === 'detailed' && (
             data.summary ? <SummaryPanel summary={data.summary} /> : <ReportView sections={data.reports.detailed} reasoningLookup={reasoningLookup} />

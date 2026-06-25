@@ -2,9 +2,10 @@ import type { SummaryResponse } from '../../types/contracts'
 
 interface SummaryPanelProps {
   summary: SummaryResponse | null
+  variant?: 'compact' | 'full'
 }
 
-export function SummaryPanel({ summary }: SummaryPanelProps) {
+export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
   if (!summary) {
     return (
       <div className="px-6 py-8 text-[13px] text-[var(--ink-3)]">
@@ -12,6 +13,8 @@ export function SummaryPanel({ summary }: SummaryPanelProps) {
       </div>
     )
   }
+
+  const isCompact = variant === 'compact'
 
   const pageRefs = (provenance: SummaryResponse['overview']['provenance']) => {
     const pages = [...new Set(provenance.map((p) => p.page_start).filter((p): p is number => p != null))].sort((a, b) => a - b)
@@ -54,13 +57,17 @@ export function SummaryPanel({ summary }: SummaryPanelProps) {
           <h3 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)] mb-2">
             {section.title}
           </h3>
-          <p className="text-[13px] text-[var(--ink)] leading-relaxed">{section.text}</p>
-          {pageRefs(section.provenance)}
+          {!isCompact && (
+            <>
+              <p className="text-[13px] text-[var(--ink)] leading-relaxed">{section.text}</p>
+              {pageRefs(section.provenance)}
+            </>
+          )}
         </div>
       ))}
 
       {/* Recommendations */}
-      {summary.recommendations && summary.recommendations.length > 0 && (
+      {!isCompact && summary.recommendations && summary.recommendations.length > 0 && (
         <div className="px-6 py-5">
           <h3 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)] mb-3">
             Recommendations ({summary.recommendations.length})
@@ -79,6 +86,10 @@ export function SummaryPanel({ summary }: SummaryPanelProps) {
             )}
           </div>
         </div>
+      )}
+
+      {isCompact && (
+        <p className="px-6 py-3 text-[11px] text-[var(--ink-3)]">Open Detailed analysis for full section text.</p>
       )}
     </div>
   )
