@@ -310,6 +310,52 @@ test('lattice KPI and agreement source badges follow backend fields', async ({ p
   }
 })
 
+test('lattice KPI source badges show unavailable when metric source fields are omitted', async ({ page }) => {
+  const docId = 'test_doc_metric_sources'
+  const statusDoc = {
+    document_id: docId,
+    label: 'Metric source test document',
+    graph_namespace: 'metric_source_ns',
+    page_count: 4,
+    pipeline_stage: 'completed',
+    upload_ts: '2026-06-29T00:00:00Z',
+    chronology_event_count: 12,
+    people_mentioned_count: 5,
+    graph_counts: {
+      claims_total: 20,
+      entities_total: 7,
+      data_source: 'real',
+    },
+    kpi_metrics: {
+      open_conflicts: 2,
+      open_conflicts_data_source: null,
+      human_queue: 3,
+      human_queue_data_source: null,
+      jaccard: 0.42,
+      jaccard_data_source: null,
+      claims_disputed: 1,
+      claims_disputed_data_source: null,
+    },
+  }
+
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(statusDoc),
+    })
+  })
+
+  await page.goto(`/runs/${docId}`)
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+
+  for (const label of ['Conflicts', 'Human queue', 'Agreement Chronology', 'Agreement People', 'Agreement Entity']) {
+    const sourceLabel = page.locator(`[data-source-label="${label}"]`)
+    await expect(sourceLabel.locator('[title="source unavailable"]')).toBeVisible({ timeout: 10000 })
+    await expect(sourceLabel.locator('[title="mock data"]')).toHaveCount(0)
+  }
+})
+
 test('evidence graph panel loads with real data', async ({ page }) => {
   await page.goto('/')
   const docId = await waitForRealDoc(page)
@@ -503,6 +549,61 @@ test('static lawyer app loads matter list', async ({ page }) => {
 
 test('static lawyer app loads chronology rows', async ({ page }) => {
   await serveStaticLawyerJsxAsRaw(page)
+  const docId = 'static_chronology_doc'
+
+  await page.route('**/api/matters', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        matters: [{ id: docId, title: 'Static Chronology Matter', namespace: 'static_chronology_ns' }],
+      }),
+    })
+  })
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        label: 'Static Chronology Matter',
+        data_source: 'real',
+        graph_namespace: 'static_chronology_ns',
+        chronology_event_count: 1,
+        graph_counts: { claims_total: 1, entities_total: 1, data_source: 'real' },
+      }),
+    })
+  })
+  await page.route(`**/api/registers/${docId}?type=events**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        rows: [
+          {
+            id: 'event:test',
+            salience_score: 0.91,
+            entity: {
+              event_date_iso: '2026-06-29',
+              event_description: 'Mocked chronology event',
+              validation_status: 'real',
+            },
+            provenance: [{ chunk_id: 'chunk:test', page_start: 1 }],
+          },
+        ],
+      }),
+    })
+  })
+  await page.route(`**/api/docs/${docId}/feedback`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ adjudications: [] }),
+    })
+  })
+
   await page.goto(STATIC_LAWYER_URL)
   await waitForStaticLawyerMatterList(page)
 

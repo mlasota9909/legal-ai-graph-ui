@@ -242,9 +242,9 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
     kpi: {
       ...prev.kpi,
       ...(claimsTotal != null ? { claimsTotal, claimsAccepted: claimsTotal, claimsDisputed: 0, claimsTotalSource: 'real' as const } : {}),
-      ...(metrics?.open_conflicts != null ? { openConflicts: metrics.open_conflicts, openConflictsSource: openConflictsSource ?? 'mock' as const } : {}),
-      ...(metrics?.human_queue != null ? { humanQueue: metrics.human_queue, humanQueueSource: humanQueueSource ?? 'mock' as const } : {}),
-      ...(metrics?.claims_disputed != null ? { claimsDisputed: metrics.claims_disputed, claimsDisputedSource: claimsDisputedSource ?? 'mock' as const } : {}),
+      ...(metrics?.open_conflicts != null ? { openConflicts: metrics.open_conflicts, openConflictsSource: openConflictsSource ?? 'unavailable' as const } : {}),
+      ...(metrics?.human_queue != null ? { humanQueue: metrics.human_queue, humanQueueSource: humanQueueSource ?? 'unavailable' as const } : {}),
+      ...(metrics?.claims_disputed != null ? { claimsDisputed: metrics.claims_disputed, claimsDisputedSource: claimsDisputedSource ?? 'unavailable' as const } : {}),
     },
     agreement: {
       ...prev.agreement,
@@ -253,7 +253,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
             ...(chronologyCount != null
               ? { ...prev.agreement.chronology, claims: chronologyCount, accepted: chronologyCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.chronology),
-            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
           }
         : prev.agreement.chronology,
       person: individualsCount != null || hasJaccardMetric
@@ -261,7 +261,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
             ...(individualsCount != null
               ? { ...prev.agreement.person, claims: individualsCount, accepted: individualsCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.person),
-            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
           }
         : prev.agreement.person,
       entity: entitiesTotal != null || hasJaccardMetric
@@ -269,7 +269,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
             ...(entitiesTotal != null
               ? { ...prev.agreement.entity, claims: entitiesTotal, accepted: entitiesTotal, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.entity),
-            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
           }
         : prev.agreement.entity,
     },
