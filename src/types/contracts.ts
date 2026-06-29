@@ -1,3 +1,5 @@
+import type { DataSource } from '../utils/dataSource'
+
 export type ArtifactView =
   | 'monitor'
   | 'chronology'
@@ -71,11 +73,15 @@ export interface PipelineState {
 
 export interface RunKpi {
   claimsTotal: number
+  claimsTotalSource?: DataSource
   claimsAccepted: number
   claimsDisputed: number
+  claimsDisputedSource?: DataSource
   /** Open three-lane conflicts (Lattice KPI). */
   openConflicts: number
+  openConflictsSource?: DataSource
   humanQueue: number
+  humanQueueSource?: DataSource
   cacheHitRate: number
   workflowHealthy: boolean
 }
@@ -95,6 +101,8 @@ export interface AgreementItem {
   accepted: number
   disputed: number
   superseded: number
+  claimsSource?: DataSource
+  jaccardSource?: DataSource
 }
 
 export interface AgreementSnapshot {
@@ -158,7 +166,6 @@ export interface RegisterProvenance {
   page?: number | null
   page_start?: number | null
   page_end?: number | null
-  source_uri?: string | null
 }
 export type RegisterType = 'people' | 'legislation' | 'authority' | 'events' | 'organisation' | 'document'
 export interface RegisterRow {
@@ -206,7 +213,8 @@ export interface PackSummary {
   document_ids: string[]
   namespaces: string[]
   counts: PackCounts
-  data_source: string
+  data_source: DataSource
+  counts_data_source?: DataSource
 }
 
 export interface PackDetail {
@@ -216,7 +224,8 @@ export interface PackDetail {
   namespaces: string[]
   counts: PackCounts
   documents: StatusDocument[]
-  data_source: string
+  data_source: DataSource
+  counts_data_source?: DataSource
 }
 
 export interface PacksListResponse {
@@ -239,9 +248,10 @@ export interface MattersListResponse {
 
 export interface QueryRequest {
   question: string
-  namespace?: string | null
-  namespaces?: string[] | null
+  document_id?: string | null
   pack_id?: string | null
+  namespace?: string | null  // deprecated transitional
+  namespaces?: string[] | null  // deprecated transitional
 }
 
 export interface QueryCitation {
@@ -260,7 +270,8 @@ export interface QueryResponse {
   supporting_subgraph: Record<string, unknown>
   validation_status: string
   confidence: number
-  data_source: string
+  data_source: DataSource
+  answer_basis?: string | null
   retrieval_debug: Record<string, unknown>
 }
 

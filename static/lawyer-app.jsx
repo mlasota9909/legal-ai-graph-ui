@@ -309,6 +309,7 @@ const lawStyle = `
   .lw-chat-turn.assistant .lw-chat-bubble{background:${LW.bg};color:${LW.ink}}
   .lw-chat-turn.assistant .lw-chat-bubble.loading{color:${LW.ink3};font-style:italic}
   .lw-chat-byline{font-size:10.5px;color:${LW.ink3};font-family:${LW.mono};letter-spacing:.02em}
+  .lw-chat-source{margin-left:6px;text-transform:uppercase;font-size:9.5px;color:${LW.accent}}
   .lw-chat-cites{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
   .lw-chat-cite{font-family:${LW.mono};font-size:10.5px;padding:2px 8px;border-radius:99px;
     background:${LW.accentSoft};color:${LW.accent};cursor:pointer;transition:background .12s;font-weight:500}
@@ -1124,6 +1125,12 @@ function _claimArtifact(claimId) {
   return 'chronology';
 }
 
+function queryDataSource(value, answerBasis) {
+  if (value === 'real' || value === 'simulated' || value === 'mock') return value;
+  if (value === 'retrieved_evidence' || answerBasis === 'retrieved_evidence') return 'real';
+  return 'mock';
+}
+
 function ChatDock({ onCite, docId, currentNamespace }) {
   const [expanded, setExpanded] = React.useState(false);
   const [val, setVal] = React.useState('');
@@ -1144,11 +1151,20 @@ function ChatDock({ onCite, docId, currentNamespace }) {
     setVal('');
     setExpanded(true);
     setLoading(true);
+    // Build query body preferring document_id, with transitional namespace fallback
+    const queryBody = {
+      question: text,
+      document_id: docId || null,
+    };
+    // Transitional compatibility for Core v0.2.7: prefer document_id/pack_id when available.
+    if (!docId && currentNamespace) {
+      queryBody.namespace = currentNamespace;
+    }
     try {
       const resp = await fetch('/api/query', {
         method: 'POST',
         headers: apiAuthHeaders(true),
-        body: JSON.stringify({ question: text, namespace: currentNamespace || null }),
+        body: JSON.stringify(queryBody),
       });
       const data = resp.ok ? await resp.json() : null;
       const answer = data?.answer || 'No answer found in the available artifact claims.';
@@ -1158,7 +1174,7 @@ function ChatDock({ onCite, docId, currentNamespace }) {
         id: c.evidence_id || c.result_id || '',
         label: [c.source, c.page != null ? 'p.' + c.page : ''].filter(Boolean).join(' · ') || (c.evidence_id || '').slice(0, 70),
       }));
-      const bot = { id: 'a'+Date.now(), who: 'assistant', t: new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false}), text: answer, cites };
+      const bot = { id: 'a'+Date.now(), who: 'assistant', t: new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false}), text: answer, cites, dataSource: queryDataSource(data?.data_source, data?.answer_basis) };
       setHistory(h => h.filter(m => m.id !== '__thinking__').concat(bot));
     } catch(e) {
       const err = { id: 'e'+Date.now(), who: 'assistant', t: new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false}), text: 'Request failed — please try again.' };
@@ -1173,7 +1189,10 @@ function ChatDock({ onCite, docId, currentNamespace }) {
       <div className="lw-chat-conv" ref={scrollRef}>
         {history.map(turn => (
           <div key={turn.id} className={"lw-chat-turn " + turn.who}>
-            <span className="lw-chat-byline">{turn.who === 'user' ? 'You' : 'Atrium'} · {turn.t}</span>
+            <span className="lw-chat-byline">
+              {turn.who === 'user' ? 'You' : 'Atrium'} · {turn.t}
+              {turn.who === 'assistant' && turn.dataSource && <span className="lw-chat-source">{turn.dataSource}</span>}
+            </span>
             <div className={"lw-chat-bubble" + (turn.loading ? ' loading' : '')}>{turn.text}</div>
             {turn.cites && (
               <div className="lw-chat-cites">

@@ -13,8 +13,10 @@ interface AskPanelProps {
 
 type ValidationStatus = 'supported' | 'partial' | 'unsupported'
 
-function parseDataSource(value: string | undefined): DataSource {
-  if (value === 'real' || value === 'simulated') return value
+function parseDataSource(value: string | undefined | null, answerBasis?: string | null): DataSource {
+  if (value === 'real' || value === 'simulated' || value === 'mock') return value
+  if (value === 'retrieved_evidence' || answerBasis === 'retrieved_evidence') return 'real'
+  // ponytail: SourceDot has no unavailable state; keep truly unknown API values visibly non-real.
   return 'mock'
 }
 
@@ -98,7 +100,7 @@ const VALIDATION_STYLES: Record<
   },
 }
 
-export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: AskPanelProps) {
+export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelProps) {
   const nav = useNav()
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
@@ -114,11 +116,21 @@ export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: Ask
     setError(null)
     setResponse(null)
 
+    // Build query body preferring document_id, with transitional namespace fallback
+    const queryBody: { question: string; document_id?: string | null; namespace?: string | null } = {
+      question: trimmed,
+      document_id: docId,
+    }
+    // Transitional compatibility for Core v0.2.7: prefer document_id/pack_id when available.
+    if (!docId && namespace) {
+      queryBody.namespace = namespace
+    }
+
     try {
       const res = await fetch('/api/query', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ question: trimmed, namespace }),
+        body: JSON.stringify(queryBody),
       })
 
       if (!res.ok) {
@@ -132,7 +144,7 @@ export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: Ask
     } finally {
       setLoading(false)
     }
-  }, [question, namespace, loading])
+  }, [question, docId, namespace, loading])
 
   const handleCitationClick = useCallback(
     (citation: QueryCitation) => {
@@ -143,7 +155,7 @@ export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: Ask
     [nav, onBack]
   )
 
-  const dataSource = parseDataSource(response?.data_source)
+  const dataSource = parseDataSource(response?.data_source, response?.answer_basis)
   const validation = parseValidationStatus(response?.validation_status)
   const validationStyle = VALIDATION_STYLES[validation]
   const answerBlocks = response ? matchCitationsToSentences(splitSentences(response.answer), response.citations) : []
@@ -189,7 +201,7 @@ export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: Ask
 
         <button
           type="button"
-          disabled={loading || !question.trim() || !namespace}
+          disabled={loading || !question.trim() || (!docId && !namespace)}
           onClick={() => void handleSubmit()}
           className="mt-4 font-mono text-[13px] font-semibold text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -273,9 +285,9 @@ export function AskPanel({ docId: _docId, namespace, onBack, onGoEvidence }: Ask
           </section>
         )}
 
-        {!namespace && !loading && (
+        {!docId && !namespace && !loading && (
           <p className="mt-4 font-mono text-[11px] text-[var(--ink-3)]">
-            Waiting for graph namespace — queries will use document scope when available.
+            Waiting for document context — queries will use document scope when available.
           </p>
         )}
       </main>

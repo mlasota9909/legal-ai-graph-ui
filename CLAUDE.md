@@ -1,5 +1,9 @@
 # CLAUDE.md — legal-ai-graph-ui (UI workstream)
 
+## Latest UI handoff
+
+2026-06-29 UI Codex action status is in `CLAUDE-HANDOFF.md`. Latest completed Linear issue: `MAC-39` for augmentation provider source-badge accuracy. Next recommended UI task: U5 static app parity; keep query-scope changes deferred until Architect/Core decide the public scope.
+
 ## ⚠️ READ FIRST — worker methodology & cost (updated 2026-06-23 by the backend chat)
 **Full guide: `/home/mlasota/legal-ai-coord/WORKER-METHODOLOGY.md` — read it before dispatching any worker.**
 Your workers have been "failing silently" and you've been re-doing the work yourself in Opus, which hit the

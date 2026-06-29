@@ -18,6 +18,7 @@ import type {
   WorkspaceData,
 } from '../types/contracts'
 import type { ListStatusFilter } from '../types/listFilter'
+import type { DataSource } from '../utils/dataSource'
 
 const VIEW_SEGMENTS: Record<string, ArtifactView> = {
   monitor: 'monitor',
@@ -84,6 +85,11 @@ interface StatusDocument {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseDataSource(value: string | null | undefined): DataSource | undefined {
+  if (value === 'real' || value === 'simulated' || value === 'mock') return value
+  return undefined
 }
 
 function parseView(pathname: string): ArtifactView {
@@ -214,6 +220,12 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
   const gc = status.graph_counts
   const entitiesTotal = gc?.entities_total ?? null
   const claimsTotal = gc?.claims_total ?? null
+  const metrics = status.kpi_metrics
+  const hasJaccardMetric = metrics != null && 'jaccard' in metrics
+  const openConflictsSource = parseDataSource(metrics?.open_conflicts_data_source)
+  const humanQueueSource = parseDataSource(metrics?.human_queue_data_source)
+  const claimsDisputedSource = parseDataSource(metrics?.claims_disputed_data_source)
+  const jaccardSource = parseDataSource(metrics?.jaccard_data_source)
 
   return {
     ...prev,
@@ -229,35 +241,35 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
     pipelines: nextPipelines,
     kpi: {
       ...prev.kpi,
-      ...(claimsTotal != null ? { claimsTotal, claimsAccepted: claimsTotal, claimsDisputed: 0 } : {}),
-      ...(status.kpi_metrics?.open_conflicts != null ? { openConflicts: status.kpi_metrics.open_conflicts } : {}),
-      ...(status.kpi_metrics?.human_queue != null ? { humanQueue: status.kpi_metrics.human_queue } : {}),
-      ...(status.kpi_metrics?.claims_disputed != null ? { claimsDisputed: status.kpi_metrics.claims_disputed } : {}),
+      ...(claimsTotal != null ? { claimsTotal, claimsAccepted: claimsTotal, claimsDisputed: 0, claimsTotalSource: 'real' as const } : {}),
+      ...(metrics?.open_conflicts != null ? { openConflicts: metrics.open_conflicts, openConflictsSource: openConflictsSource ?? 'mock' as const } : {}),
+      ...(metrics?.human_queue != null ? { humanQueue: metrics.human_queue, humanQueueSource: humanQueueSource ?? 'mock' as const } : {}),
+      ...(metrics?.claims_disputed != null ? { claimsDisputed: metrics.claims_disputed, claimsDisputedSource: claimsDisputedSource ?? 'mock' as const } : {}),
     },
     agreement: {
       ...prev.agreement,
-      chronology: chronologyCount != null || status.kpi_metrics?.jaccard != null
+      chronology: chronologyCount != null || hasJaccardMetric
         ? {
             ...(chronologyCount != null
-              ? { ...prev.agreement.chronology, claims: chronologyCount, accepted: chronologyCount, disputed: 0 }
+              ? { ...prev.agreement.chronology, claims: chronologyCount, accepted: chronologyCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.chronology),
-            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
           }
         : prev.agreement.chronology,
-      person: individualsCount != null || status.kpi_metrics?.jaccard != null
+      person: individualsCount != null || hasJaccardMetric
         ? {
             ...(individualsCount != null
-              ? { ...prev.agreement.person, claims: individualsCount, accepted: individualsCount, disputed: 0 }
+              ? { ...prev.agreement.person, claims: individualsCount, accepted: individualsCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.person),
-            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
           }
         : prev.agreement.person,
-      entity: entitiesTotal != null || status.kpi_metrics?.jaccard != null
+      entity: entitiesTotal != null || hasJaccardMetric
         ? {
             ...(entitiesTotal != null
-              ? { ...prev.agreement.entity, claims: entitiesTotal, accepted: entitiesTotal, disputed: 0 }
+              ? { ...prev.agreement.entity, claims: entitiesTotal, accepted: entitiesTotal, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.entity),
-            ...(status.kpi_metrics?.jaccard != null ? { jaccard: status.kpi_metrics.jaccard } : {}),
+            ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'mock' as const } : {}),
           }
         : prev.agreement.entity,
     },
@@ -533,26 +545,42 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   }, [docId])
 
   useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+    const currentDocId = docId
     hasRealActivity.current = false
+    setData((prev) => ({ ...prev, activity: [] }))
     const headers = authHeaders()
-    fetch(`/api/docs/${encodeURIComponent(docId)}/activity`, { headers })
+    fetch(`/api/docs/${encodeURIComponent(currentDocId)}/activity`, { headers, signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((payload: ActivityStreamResponse | null) => {
+        if (cancelled) return
         if (!payload || payload.data_source !== 'real') return
+        if (payload.document_id && payload.document_id !== currentDocId) return
         hasRealActivity.current = true
         const realEvents = payload.events.map((e) => ({ ...e, dataSource: 'real' as const }))
         setData((prev) => ({ ...prev, activity: realEvents }))
       })
       .catch(() => undefined)
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [docId])
 
   useEffect(() => {
     if (!docId) return
+    let cancelled = false
+    const controller = new AbortController()
+    const currentDocId = docId
+    setData((prev) => ({ ...prev, summary: null }))
     const headers = authHeaders()
-    fetch(`/api/docs/${encodeURIComponent(docId)}/summary`, { headers })
+    fetch(`/api/docs/${encodeURIComponent(currentDocId)}/summary`, { headers, signal: controller.signal })
       .then((r) => (r.ok ? (r.json() as Promise<SummaryResponse>) : null))
       .then((payload: SummaryResponse | null) => {
+        if (cancelled) return
         if (!payload) return
+        if (payload.document_id && payload.document_id !== currentDocId) return
         setData((prev) => ({
           ...prev,
           summary: payload,
@@ -564,23 +592,38 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
         }))
       })
       .catch(() => undefined)
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [docId])
 
   useEffect(() => {
     if (!docId) return
+    let cancelled = false
+    const controller = new AbortController()
+    const currentDocId = docId
+    setData((prev) => ({ ...prev, pipeline: null }))
     const headers = authHeaders()
-    fetch(`/api/docs/${encodeURIComponent(docId)}/pipeline`, { headers })
+    fetch(`/api/docs/${encodeURIComponent(currentDocId)}/pipeline`, { headers, signal: controller.signal })
       .then((r) => (r.ok ? (r.json() as Promise<PipelineResponse>) : null))
       .then((payload: PipelineResponse | null) => {
+        if (cancelled) return
         if (!payload) {
           setData((prev) => ({ ...prev, pipeline: null }))
           return
         }
+        if (payload.document_id !== currentDocId) return
         setData((prev) => ({ ...prev, pipeline: payload }))
       })
       .catch(() => {
+        if (cancelled) return
         setData((prev) => ({ ...prev, pipeline: null }))
       })
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [docId])
 
   useEffect(() => {

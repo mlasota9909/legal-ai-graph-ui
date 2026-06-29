@@ -13,6 +13,28 @@ const ACTIVITY_FILTERS = ['all', 'conflicts', 'decisions', 'claims', 'entity', '
 
 type ActivityFilter = (typeof ACTIVITY_FILTERS)[number]
 
+function sourceFrom(value: unknown): DataSource | undefined {
+  if (value === 'real' || value === 'simulated' || value === 'mock') return value
+  return undefined
+}
+
+function countFrom(record: Record<string, unknown> | null | undefined, key: string): number {
+  const value = record?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function externalSourceCount(record: Record<string, number>, key: string): number | null {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : null
+}
+
+function sourceCountText(value: number | null): string {
+  return value == null ? 'unavailable' : value.toLocaleString()
+}
+
+function sourceCountKind(value: number | null): DataSource {
+  return value == null ? 'mock' : 'real'
+}
+
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
   const nav = useNav()
   const selectRun = nav?.selectRun
@@ -32,7 +54,10 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
         const packsResp = await fetch('/api/packs', { headers: authHeaders() })
         if (packsResp.ok) {
           const payload = (await packsResp.json()) as PacksListResponse
-          items = payload.packs ?? []
+          items = (payload.packs ?? []).map((pack) => ({
+            ...pack,
+            counts_data_source: pack.counts_data_source ?? sourceFrom(pack.data_source),
+          }))
         } else {
           // /api/packs not yet deployed — fall back to /api/status
           const statusResp = await fetch('/api/status', { headers: authHeaders() })
@@ -45,12 +70,13 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
               namespaces: [doc.graph_namespace ?? doc.document_id],
               counts: {
                 documents: 1,
-                claims_total: 0,
-                entities_total: 0,
-                persons_total: 0,
-                events_total: 0,
+                claims_total: countFrom(doc.graph_counts, 'claims_total'),
+                entities_total: countFrom(doc.graph_counts, 'entities_total'),
+                persons_total: countFrom(doc.graph_counts, 'persons_total'),
+                events_total: countFrom(doc.graph_counts, 'events_total'),
               },
-              data_source: 'real',
+              data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'mock',
+              counts_data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'mock',
             }))
           }
         }
@@ -91,6 +117,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
         <div className="absolute left-0 top-full z-20 mt-2 w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] shadow-lg">
           {packs.map((pack) => {
             const docId = pack.document_ids[0]
+            const countsSource = pack.counts_data_source ?? sourceFrom(pack.data_source) ?? 'mock'
             return (
               <button
                 type="button"
@@ -110,7 +137,10 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
                     {pack.name ?? pack.pack_id}
                   </span>
                   <span className="font-mono text-[10.5px] text-[var(--ink-3)]">
-                    {pack.counts.claims_total.toLocaleString()} claims
+                    {countsSource === 'mock' && pack.counts.claims_total === 0
+                      ? 'claims unavailable'
+                      : `${pack.counts.claims_total.toLocaleString()} claims`}
+                    <SourceDot source={countsSource} show={nav?.showSources ?? false} />
                   </span>
                 </div>
                 <span className="self-center font-mono text-[10px] text-[var(--ink-3)]">
@@ -153,7 +183,7 @@ function KpiCell({ label, value, delta, tone, source = 'mock' }: { label: string
   const nav = useNav()
   const toneClass = tone === 'ok' ? 'text-[var(--good)]' : tone === 'warn' ? 'text-[var(--warn)]' : 'text-[var(--ink)]'
   return (
-    <div className="flex min-w-[122px] flex-col justify-center border-r border-[var(--rule)] px-4 py-3 last:border-r-0">
+    <div data-source-label={label} className="flex min-w-[122px] flex-col justify-center border-r border-[var(--rule)] px-4 py-3 last:border-r-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
         {label}<SourceDot source={source} show={nav?.showSources ?? false} />
       </div>
@@ -167,7 +197,7 @@ function AgreementColumn({ label, item, source = 'mock' }: { label: string; item
   const nav = useNav()
   const ok = item.jaccard != null && item.jaccard >= item.gate
   return (
-    <div className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
+    <div data-source-label={`Agreement ${label}`} className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
         {label}<SourceDot source={source} show={nav?.showSources ?? false} />
       </div>
@@ -496,6 +526,13 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
 export function LatticeDashboard({ data }: LatticeDashboardProps) {
   const nav = useNav()
   const showSources = nav?.showSources ?? false
+  const externalSourceCounts = data.augmentation.externalSourcesBySource
+  const eyeciteCount = externalSourceCount(externalSourceCounts, 'eyecite')
+  const austliiCount = externalSourceCount(externalSourceCounts, 'austlii')
+  const asicCount = externalSourceCount(externalSourceCounts, 'asic')
+  const companiesHouseCount = externalSourceCount(externalSourceCounts, 'companies_house')
+  const courtListenerCount = externalSourceCount(externalSourceCounts, 'courtlistener')
+  const edgarCount = externalSourceCount(externalSourceCounts, 'edgar')
   return (
     <div className="theme-lattice min-h-screen bg-[var(--bg)] text-[var(--ink)]">
       <div className="flex flex-wrap border-b border-[var(--rule)] bg-[var(--panel)]">
@@ -530,9 +567,9 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
           value={`${data.doc.elapsedHours.toFixed(1)}h`}
           delta={`of ${data.doc.timeBudgetHours}h · ${((data.doc.elapsedHours / data.doc.timeBudgetHours) * 100).toFixed(0)}%`}
         />
-        <KpiCell label="Claims" value={data.kpi.claimsTotal.toLocaleString()} delta="+18 / min" source="simulated" />
-        <KpiCell label="Conflicts" value={String(data.kpi.openConflicts)} tone="warn" delta="1 arbiter · 1 iterating" source="real" />
-        <KpiCell label="Human queue" value={String(data.kpi.humanQueue)} tone="warn" delta="2 person · 1 chrono" source="real" />
+        <KpiCell label="Claims" value={data.kpi.claimsTotal.toLocaleString()} delta="+18 / min" source={data.kpi.claimsTotalSource ?? 'mock'} />
+        <KpiCell label="Conflicts" value={String(data.kpi.openConflicts)} tone="warn" delta="1 arbiter · 1 iterating" source={data.kpi.openConflictsSource ?? 'mock'} />
+        <KpiCell label="Human queue" value={String(data.kpi.humanQueue)} tone="warn" delta="2 person · 1 chrono" source={data.kpi.humanQueueSource ?? 'mock'} />
         <KpiCell label="SGLang cache" value={`${Math.round(data.kpi.cacheHitRate * 100)}%`} tone="ok" delta="↑ vs 30% floor" source="simulated" />
         <KpiCell label="Workflow" value="OK" tone="ok" delta="0 retries · Temporal" />
       </div>
@@ -600,9 +637,9 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Agreement</h3>
               </div>
               <div className="grid grid-cols-1 gap-0 sm:grid-cols-3">
-                <AgreementColumn label="Chronology" item={data.agreement.chronology} source={data.isRealData ? 'real' : 'mock'} />
-                <AgreementColumn label="People" item={data.agreement.person} source={data.isRealData ? 'real' : 'mock'} />
-                <AgreementColumn label="Entity" item={data.agreement.entity} source={data.isRealData ? 'real' : 'mock'} />
+                <AgreementColumn label="Chronology" item={data.agreement.chronology} source={data.agreement.chronology.jaccardSource ?? data.agreement.chronology.claimsSource ?? 'mock'} />
+                <AgreementColumn label="People" item={data.agreement.person} source={data.agreement.person.jaccardSource ?? data.agreement.person.claimsSource ?? 'mock'} />
+                <AgreementColumn label="Entity" item={data.agreement.entity} source={data.agreement.entity.jaccardSource ?? data.agreement.entity.claimsSource ?? 'mock'} />
               </div>
             </div>
             <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
@@ -783,20 +820,19 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     eyecite
                   </span>
-                  citations tagged
+                  citations tagged<SourceDot source={sourceCountKind(eyeciteCount)} show={showSources} />
                 </span>
-                <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.eyeciteCitations}</span>
+                <span className="font-mono font-semibold text-[var(--ink)]">{sourceCountText(eyeciteCount)}</span>
               </div>
               <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
                 <span className="flex items-center gap-2">
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     AustLII
                   </span>
-                  statutes verified
+                  statutes verified<SourceDot source={sourceCountKind(austliiCount)} show={showSources} />
                 </span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.austlii.verified}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.austlii.total}</small>
+                  {sourceCountText(austliiCount)}
                 </span>
               </div>
               <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
@@ -804,11 +840,10 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     ASIC
                   </span>
-                  entities confirmed
+                  entities confirmed<SourceDot source={sourceCountKind(asicCount)} show={showSources} />
                 </span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.asic.confirmed}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.asic.total}</small>
+                  {sourceCountText(asicCount)}
                 </span>
               </div>
               <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
@@ -816,11 +851,10 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     Cos House
                   </span>
-                  UK entities
+                  UK entities<SourceDot source={sourceCountKind(companiesHouseCount)} show={showSources} />
                 </span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.companiesHouse.confirmed}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.companiesHouse.total}</small>
+                  {sourceCountText(companiesHouseCount)}
                 </span>
               </div>
               <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
@@ -828,10 +862,10 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     EDGAR
                   </span>
-                  US filings
+                  US filings<SourceDot source={sourceCountKind(edgarCount)} show={showSources} />
                 </span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.edgar == null ? '—' : data.augmentation.edgar}
+                  {sourceCountText(edgarCount)}
                 </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
@@ -839,10 +873,10 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                   <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
                     CourtListener
                   </span>
-                  US case law
+                  US case law<SourceDot source={sourceCountKind(courtListenerCount)} show={showSources} />
                 </span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.courtListener == null ? '—' : data.augmentation.courtListener}
+                  {sourceCountText(courtListenerCount)}
                 </span>
               </div>
             </div>

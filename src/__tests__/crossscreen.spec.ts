@@ -180,6 +180,38 @@ test('document picker switches active document', async ({ page }) => {
   expect(parseCount(claimsText)).toBeGreaterThan(0)
 })
 
+test('document picker fallback does not badge fabricated zero counts as real', async ({ page }) => {
+  await page.route('**/api/packs', async (route) => {
+    await route.fulfill({ status: 404, body: 'not found' })
+  })
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        documents: [
+          {
+            document_id: 'fallback_doc',
+            label: 'Fallback document',
+            graph_namespace: 'fallback_ns',
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await waitForRealDoc(page)
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+  await page.locator('button', { hasText: 'Currently showing:' }).click()
+
+  const fallbackRow = page.locator('button', { hasText: 'Fallback document' }).first()
+  await expect(fallbackRow).toBeVisible({ timeout: 10000 })
+  await expect(fallbackRow).toContainText('claims unavailable')
+  await expect(fallbackRow.locator('[title="mock data"]')).toBeVisible()
+  await expect(fallbackRow.locator('[title="real data"]')).toHaveCount(0)
+})
+
 test('no mock in prod build — data_source badges are real after load', async ({ page }) => {
   await page.goto('/')
   await waitForRealDoc(page)
@@ -201,6 +233,63 @@ test('no mock in prod build — data_source badges are real after load', async (
   )
   const statusCalls = apiCalls.filter((c) => c.url.includes('/api/status/') && c.status === 200)
   expect(statusCalls.length).toBeGreaterThan(0)
+})
+
+test('atrium list artifact source badge follows real active rows', async ({ page }) => {
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+
+  await page.goto(`/runs/${docId}/chronology`)
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+
+  const listHeader = page
+    .locator('div', { hasText: /Showing .*Full run:/ })
+    .filter({ has: page.locator('[title="real data"]') })
+    .first()
+  await expect(listHeader).toBeVisible({ timeout: 10000 })
+})
+
+test('atrium augmentation provider rows do not invent omitted source counts', async ({ page }) => {
+  await page.route('**/api/status/original_royalcomm', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json()
+    await route.fulfill({
+      response,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...payload,
+        graph_counts: {
+          ...payload.graph_counts,
+          external_sources: 3,
+          evidenced_by_external_edges: 3,
+          external_sources_by_source: { austlii: 3 },
+          data_source: 'real',
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  const docId = await waitForRealDoc(page)
+  await page.goto(`/runs/${docId}/chronology`)
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+
+  await expect(page.locator('[data-source-label="Augmentation austlii"]')).toContainText('3')
+  await expect(page.locator('[data-source-label="Augmentation austlii"] [title="real data"]')).toBeVisible()
+  await expect(page.locator('[data-source-label="Augmentation eyecite"]')).toContainText('unavailable')
+  await expect(page.locator('[data-source-label="Augmentation eyecite"] [title="mock data"]')).toBeVisible()
+  await expect(page.locator('[data-source-label="Augmentation eyecite"]')).not.toContainText('312')
+  await expect(page.locator('[data-source-label="Augmentation companies_house"]')).toContainText('unavailable')
+})
+
+test('lattice KPI and agreement source badges follow backend fields', async ({ page }) => {
+  await page.goto('/')
+  await waitForRealDoc(page)
+  await page.locator('button', { hasText: 'Sources' }).first().click()
+
+  for (const label of ['Claims', 'Conflicts', 'Human queue', 'Agreement Chronology', 'Agreement People', 'Agreement Entity']) {
+    await expect(page.locator(`[data-source-label="${label}"] [title="real data"]`)).toBeVisible({ timeout: 10000 })
+  }
 })
 
 test('evidence graph panel loads with real data', async ({ page }) => {
@@ -485,6 +574,9 @@ test('AskPanel returns an answer with citations', async ({ page }) => {
 
   const queryResp = await queryResponsePromise
   expect(queryResp.ok()).toBeTruthy()
+  const queryData = (await queryResp.json()) as { data_source?: string; answer_basis?: string | null }
+  expect(queryData.data_source).toBe('real')
+  expect(['retrieved_evidence', undefined, null]).toContain(queryData.answer_basis)
 
   // Answer renders as <p class="font-serif …"> inside <main> → <section> → answer blocks
   const answerEl = page.locator('main section p').first()
@@ -539,6 +631,56 @@ test('summary endpoint returns real data_source', async ({ page }) => {
   expect(resp.ok()).toBeTruthy()
 })
 
+test('stale summary response cannot overwrite selected document', async ({ page }) => {
+  const staleText = 'STALE ORIGINAL SUMMARY SHOULD NOT RENDER'
+  const freshText = 'FRESH HOPPER SUMMARY SHOULD RENDER'
+  const provenance = {
+    node_id: 'node:test',
+    labels: [],
+    source_chunk_id: 'chunk:test',
+    page_start: 1,
+    edge_ids: [],
+    linked_node_ids: [],
+  }
+
+  await page.route('**/api/docs/original_royalcomm/summary', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: 'original_royalcomm',
+        data_source: 'real',
+        overview: { text: staleText, provenance: [provenance] },
+        sections: [{ title: 'Stale', text: staleText, provenance: [provenance] }],
+        recommendations: null,
+      }),
+    }).catch(() => undefined)
+  })
+
+  await page.route('**/api/docs/hopper/summary', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: 'hopper',
+        data_source: 'real',
+        overview: { text: freshText, provenance: [provenance] },
+        sections: [{ title: 'Fresh', text: freshText, provenance: [provenance] }],
+        recommendations: null,
+      }),
+    })
+  })
+
+  await page.goto('/runs/original_royalcomm/exec')
+  await page.waitForTimeout(100)
+  await page.goto('/runs/hopper/exec')
+
+  await expect(page.getByText(freshText)).toBeVisible({ timeout: 10000 })
+  await page.waitForTimeout(1000)
+  await expect(page.locator('body')).not.toContainText(staleText)
+})
+
 test('executive memo tab renders real summary text, not loading state', async ({ page }) => {
   // Step 1: Navigate to home and wait for real document
   await page.goto('/')
@@ -575,4 +717,89 @@ test('executive memo tab renders real summary text, not loading state', async ({
   const paragraphText = await summaryParagraph.innerText()
   expect(paragraphText).not.toContain('Loading')
   expect(paragraphText.length).toBeGreaterThan(50)
+})
+
+test('AskPanel query request uses document_id and not namespace', async ({ page }) => {
+  const TEST_DOC_ID = 'test_doc_2026'
+
+  // Mock /api/status to return a document with document_id (no namespace)
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [
+          {
+            document_id: TEST_DOC_ID,
+            label: 'Test Document',
+            graph_namespace: null,
+          },
+        ],
+      }),
+    })
+  })
+
+  // Mock /api/status/{docId} for the AskPanel to load
+  await page.route(`**/api/status/${TEST_DOC_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: TEST_DOC_ID,
+        label: 'Test Document',
+        data_source: 'real',
+        graph_namespace: null,
+      }),
+    })
+  })
+
+  // Capture /api/query requests
+  let capturedRequestBody: unknown = null
+  await page.route('**/api/query', async (route) => {
+    const request = route.request()
+    const postData = request.postDataJSON()
+    capturedRequestBody = postData
+    // Return a minimal valid response so the UI doesn't error
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        answer_basis: null,
+        answer: 'Test answer',
+        provenance: [],
+      }),
+    })
+  })
+
+  // Navigate directly to Ask screen with the test document
+  await page.goto(`/runs/${TEST_DOC_ID}/ask`)
+
+  // Wait for AskPanel to render (textarea should be visible)
+  const textarea = page.locator('textarea').first()
+  await expect(textarea).toBeVisible({ timeout: 10000 })
+
+  // Enter a question
+  const testQuestion = 'What are the main claims in this document?'
+  await textarea.fill(testQuestion)
+
+  // Click the Ask button
+  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 5000 })
+  await submitButton.click()
+
+  // Wait for the query request to be sent
+  await page.waitForTimeout(500)
+
+  // Assert the request body shape
+  expect(capturedRequestBody).toBeTruthy()
+  const body = capturedRequestBody as Record<string, unknown>
+
+  // Assert document_id is present and matches the test document
+  expect(body.document_id).toBe(TEST_DOC_ID)
+
+  // Assert namespace and namespaces are NOT present
+  expect(body.namespace).toBeUndefined()
+  expect(body.namespaces).toBeUndefined()
 })

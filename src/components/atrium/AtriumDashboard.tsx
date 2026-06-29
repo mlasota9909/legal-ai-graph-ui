@@ -42,7 +42,7 @@ interface ClaimDetail {
   type?: string | null
   salience_score?: number | null
   validation_status?: string | null
-  provenance_chain?: { chunk_id?: string; page?: number; source_uri?: string }[]
+  provenance_chain?: { chunk_id?: string; page?: number; page_start?: number; page_end?: number }[]
   linked_entities?: { id: string; name?: string; type?: string }[]
   adjudications?: { verdict: string; note?: string; created_at?: string }[]
 }
@@ -559,6 +559,27 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const loadedCount =
     isListArtifact && isListArtifactId(activeTab) ? loadedListCount(data, activeTab) : 0
   const runTotal = isListArtifact ? (artifact?.count ?? 0) : 0
+  const activeListSource =
+    isListArtifact && activeTab === 'chronology' && data.chronology.some((row) => row.dataSource === 'real')
+      ? 'real'
+      : isListArtifact && activeTab === 'entities' && data.entities.some((row) => row.dataSource === 'real')
+        ? 'real'
+        : isListArtifact && activeTab === 'people' && data.people.some((row) => row.dataSource === 'real')
+          ? 'real'
+          : 'mock'
+  const externalSourceCounts = data.augmentation.externalSourcesBySource
+  const externalSourceCount = (key: string) =>
+    Object.prototype.hasOwnProperty.call(externalSourceCounts, key) ? externalSourceCounts[key] : null
+  const eyeciteCount = externalSourceCount('eyecite')
+  const austliiCount = externalSourceCount('austlii')
+  const asicCount = externalSourceCount('asic')
+  const companiesHouseCount = externalSourceCount('companies_house')
+  const courtListenerCount = externalSourceCount('courtlistener')
+  const edgarCount = externalSourceCount('edgar')
+  const courtListenerEdgarCount =
+    courtListenerCount == null && edgarCount == null ? null : (courtListenerCount ?? 0) + (edgarCount ?? 0)
+  const sourceCountText = (value: number | null) => value == null ? 'unavailable' : value.toLocaleString()
+  const sourceCountKind = (value: number | null) => value == null ? 'mock' : 'real'
 
   const filteredChronology = useMemo(
     () =>
@@ -810,7 +831,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                   {isListArtifact
                     ? `Showing ${loadedCount.toLocaleString()} sample claim${loadedCount === 1 ? '' : 's'} · Full run: ${runTotal.toLocaleString()} · agreement ${(artifact?.agreement ?? 0).toFixed(2)} · gate ${artifact?.gate ?? 0.85}`
                     : `Reviewing ${artifact?.sections ?? 0} sections · ${artifact?.drafted ?? 0} drafted · ${artifact?.critiqued ?? 0} in critic loop · ${(artifact?.sections ?? 0) - (artifact?.drafted ?? 0) - (artifact?.critiqued ?? 0)} queued`}
-                  <SourceDot source={isListArtifact && activeTab === 'people' && data.people.some((row) => row.dataSource === 'real') ? 'real' : 'mock'} show={showSources} />
+                  <SourceDot source={activeListSource} show={showSources} />
                 </div>
               </div>
               {isListArtifact && (
@@ -925,34 +946,31 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                   <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.evidencedByExternalEdges}</span>
                 </div>
               )}
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>eyecite citations tagged<SourceDot source={'eyecite' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
-                <span className="font-mono font-semibold text-[var(--ink)]">{data.augmentation.externalSourcesBySource['eyecite'] ?? data.augmentation.eyeciteCitations}</span>
+              <div data-source-label="Augmentation eyecite" className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                <span>eyecite citations tagged<SourceDot source={sourceCountKind(eyeciteCount)} show={showSources} /></span>
+                <span className="font-mono font-semibold text-[var(--ink)]">{sourceCountText(eyeciteCount)}</span>
               </div>
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>AustLII statutes verified<SourceDot source={'austlii' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
+              <div data-source-label="Augmentation austlii" className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                <span>AustLII statutes verified<SourceDot source={sourceCountKind(austliiCount)} show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.externalSourcesBySource['austlii'] ?? data.augmentation.austlii.verified}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.austlii.total}</small>
+                  {sourceCountText(austliiCount)}
                 </span>
               </div>
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>ASIC entities confirmed<SourceDot source={'asic' in data.augmentation.externalSourcesBySource ? 'real' : 'simulated'} show={showSources} /></span>
+              <div data-source-label="Augmentation asic" className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                <span>ASIC entities confirmed<SourceDot source={sourceCountKind(asicCount)} show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.externalSourcesBySource['asic'] ?? data.augmentation.asic.confirmed}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.asic.total}</small>
+                  {sourceCountText(asicCount)}
                 </span>
               </div>
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>Companies House (UK)<SourceDot source="simulated" show={showSources} /></span>
+              <div data-source-label="Augmentation companies_house" className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                <span>Companies House (UK)<SourceDot source={sourceCountKind(companiesHouseCount)} show={showSources} /></span>
                 <span className="font-mono font-semibold text-[var(--ink)]">
-                  {data.augmentation.companiesHouse.confirmed}
-                  <small className="ml-1 font-normal text-[var(--ink-3)]">/{data.augmentation.companiesHouse.total}</small>
+                  {sourceCountText(companiesHouseCount)}
                 </span>
               </div>
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
-                <span>CourtListener / EDGAR<SourceDot source="simulated" show={showSources} /></span>
-                <span className="font-mono text-[var(--ink)]">{data.augmentation.edgar == null ? '—' : data.augmentation.edgar}</span>
+              <div data-source-label="Augmentation courtlistener_edgar" className="flex items-center justify-between px-4 py-3 text-[12px] text-[var(--ink-2)]">
+                <span>CourtListener / EDGAR<SourceDot source={sourceCountKind(courtListenerEdgarCount)} show={showSources} /></span>
+                <span className="font-mono text-[var(--ink)]">{sourceCountText(courtListenerEdgarCount)}</span>
               </div>
             </div>
           </div>
