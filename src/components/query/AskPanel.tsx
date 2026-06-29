@@ -14,6 +14,9 @@ interface AskPanelProps {
 
 type ValidationStatus = 'supported' | 'partial' | 'unsupported'
 
+const QUERY_BACKEND_UNAVAILABLE_COPY =
+  'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+
 function parseDataSource(value: string | undefined | null, answerBasis?: string | null): DataSource {
   if (value === 'retrieved_evidence' || answerBasis === 'retrieved_evidence') return 'real'
   return parseSourceData(value)
@@ -22,6 +25,18 @@ function parseDataSource(value: string | undefined | null, answerBasis?: string 
 function parseValidationStatus(value: string | undefined): ValidationStatus {
   if (value === 'partial' || value === 'unsupported') return value
   return 'supported'
+}
+
+function isQueryBackendUnavailable(payload: unknown): boolean {
+  const detail =
+    typeof payload === 'object' && payload !== null && 'detail' in payload
+      ? (payload as { detail?: unknown }).detail
+      : null
+  return (
+    typeof detail === 'object' &&
+    detail !== null &&
+    (detail as { code?: unknown }).code === 'query_backend_unavailable'
+  )
 }
 
 function authHeaders(): HeadersInit {
@@ -104,6 +119,7 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [degradedMessage, setDegradedMessage] = useState<string | null>(null)
   const [response, setResponse] = useState<QueryResponse | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
 
@@ -113,6 +129,7 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
 
     setLoading(true)
     setError(null)
+    setDegradedMessage(null)
     setResponse(null)
 
     // Build query body preferring document_id, with transitional namespace fallback
@@ -133,6 +150,11 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
       })
 
       if (!res.ok) {
+        const payload = res.status === 503 ? await res.json().catch(() => null) : null
+        if (res.status === 503 && isQueryBackendUnavailable(payload)) {
+          setDegradedMessage(QUERY_BACKEND_UNAVAILABLE_COPY)
+          return
+        }
         throw new Error(`${res.status} ${res.statusText}`)
       }
 
@@ -215,6 +237,12 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
           <p className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
             {error}
           </p>
+        )}
+
+        {degradedMessage && (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-[13px] font-medium text-amber-800">{degradedMessage}</p>
+          </div>
         )}
 
         {response && !loading && (

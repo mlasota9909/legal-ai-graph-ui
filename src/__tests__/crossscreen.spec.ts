@@ -535,6 +535,37 @@ test('static lawyer app data_source is real', async ({ page }) => {
   await expect(realSourceResponse).resolves.toBeTruthy()
 })
 
+test('static lawyer chat handles query_backend_unavailable degraded query response', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  await page.route('**/api/query', async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        detail: {
+          code: 'query_backend_unavailable',
+          message: 'Query processing backend is currently unavailable',
+        },
+      }),
+    })
+  })
+
+  await page.goto(STATIC_LAWYER_URL)
+
+  const input = page.locator('.lw-chat-input input')
+  await expect(input).toBeVisible({ timeout: 10000 })
+  await input.fill('What are the key legal issues?')
+  await page.locator('.lw-chat-send').click()
+
+  await expect(
+    page.getByText(
+      'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+    )
+  ).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('No answer found in the available artifact claims.')).toHaveCount(0)
+  await expect(page.locator('.lw-chat-source')).toHaveCount(0)
+})
+
 test('login page renders with email and password fields', async ({ page }) => {
   await page.goto('/login')
 
@@ -884,5 +915,71 @@ test('AskPanel renders unknown source state for future data_source values', asyn
 
   await expect(page.getByText('unknown source state')).toBeVisible({ timeout: 10000 })
   await expect(page.locator('[title="unknown source state"]')).toBeVisible()
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+})
+
+test('AskPanel handles query_backend_unavailable degraded query response', async ({ page }) => {
+  const TEST_DOC_ID = 'test_doc_503'
+
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [
+          {
+            document_id: TEST_DOC_ID,
+            label: 'Test Document for 503',
+            graph_namespace: null,
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.route(`**/api/status/${TEST_DOC_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: TEST_DOC_ID,
+        label: 'Test Document for 503',
+        data_source: 'real',
+        graph_namespace: null,
+      }),
+    })
+  })
+
+  await page.route('**/api/query', async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        detail: {
+          code: 'query_backend_unavailable',
+          message: 'Query processing backend is currently unavailable',
+        },
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${TEST_DOC_ID}/ask`)
+
+  const textarea = page.locator('textarea').first()
+  await expect(textarea).toBeVisible({ timeout: 10000 })
+  await textarea.fill('Test question to trigger 503')
+
+  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 5000 })
+  await submitButton.click()
+
+  await expect(
+    page.getByText(
+      'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+    )
+  ).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('[class*="bg-amber-50"]')).toBeVisible({ timeout: 5000 })
+  await expect(page.getByText('No answer found in the available artifact claims.')).toHaveCount(0)
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 })

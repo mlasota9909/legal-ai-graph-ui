@@ -1133,6 +1133,12 @@ function queryDataSource(value, answerBasis) {
   return 'unknown';
 }
 
+const QUERY_BACKEND_UNAVAILABLE_COPY = 'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.';
+
+function isQueryBackendUnavailable(data) {
+  return data?.detail?.code === 'query_backend_unavailable';
+}
+
 function dataSourceLabel(value) {
   if (value === 'unavailable') return 'source unavailable';
   if (value === 'unknown') return 'unknown source state';
@@ -1174,7 +1180,19 @@ function ChatDock({ onCite, docId, currentNamespace }) {
         headers: apiAuthHeaders(true),
         body: JSON.stringify(queryBody),
       });
-      const data = resp.ok ? await resp.json() : null;
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        const err = {
+          id: 'e'+Date.now(),
+          who: 'assistant',
+          t: new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false}),
+          text: resp.status === 503 && isQueryBackendUnavailable(data)
+            ? QUERY_BACKEND_UNAVAILABLE_COPY
+            : 'Request failed — please try again.',
+        };
+        setHistory(h => h.filter(m => m.id !== '__thinking__').concat(err));
+        return;
+      }
       const answer = data?.answer || 'No answer found in the available artifact claims.';
       const citations = Array.isArray(data?.citations) ? data.citations : [];
       const cites = citations.slice(0, 6).map(c => ({
