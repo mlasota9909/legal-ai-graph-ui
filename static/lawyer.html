@@ -41,29 +41,8 @@
     }
 
     function TraceDebugPanel({ docId }) {
-      const [open, setOpen] = React.useState(false);
-      const [traceJson, setTraceJson] = React.useState(null);
-      const [loading, setLoading] = React.useState(false);
-      const [error, setError] = React.useState('');
-
-      React.useEffect(() => {
-        if (!open || !docId) return;
-        let cancelled = false;
-        setLoading(true);
-        setError('');
-        setTraceJson(null);
-        fetch('/api/docs/' + encodeURIComponent(docId) + '/trace', { headers: apiAuthHeaders() })
-          .then(r => r.ok ? r.json() : Promise.reject(new Error('Trace fetch failed: ' + r.status)))
-          .then(data => { if (!cancelled) setTraceJson(data); })
-          .catch(err => { if (!cancelled) setError(err.message || 'Failed to load trace'); })
-          .finally(() => { if (!cancelled) setLoading(false); });
-        return () => { cancelled = true; };
-      }, [open, docId]);
-
       return (
         <details
-          open={open}
-          onToggle={(e) => setOpen(e.target.open)}
           data-panel-id={specPanelId('trace-debug', docId)}
           style={{ margin: '12px 0 0', fontFamily: 'Inter, system-ui, sans-serif' }}
         >
@@ -71,88 +50,13 @@
             Trace Debug
           </summary>
           <div style={{ marginTop: 8, padding: 12, background: '#FFF', border: '1px solid #E8E6DF', borderRadius: 8 }}>
-            {!docId && <div style={{ fontSize: 12, color: '#8A8A82' }}>Select a document to load trace.</div>}
-            {docId && loading && <div style={{ fontSize: 12, color: '#8A8A82' }}>Loading trace…</div>}
-            {docId && error && <div style={{ fontSize: 12, color: '#A33A2B' }}>{error}</div>}
-            {docId && !loading && !error && traceJson != null && (
-              <pre style={{
-                margin: 0, fontSize: 11, fontFamily: 'JetBrains Mono, monospace',
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 320, overflow: 'auto', color: '#1B1B19'
-              }}>
-                {JSON.stringify(traceJson, null, 2)}
-              </pre>
-            )}
+            <div style={{ fontSize: 12, color: '#8A8A82' }}>Trace debugging is unavailable in static mode.</div>
           </div>
         </details>
       );
     }
 
-    const SUGGEST_FOCUS = [
-      'Limitation period exposure',
-      'Procedural fairness',
-      'Class certification',
-      'Settlement quantum & releases',
-      'Algorithmic decision-making',
-      'Unresolved party roles',
-    ];
-
     function UploadModal({ onClose, matterName, debugIds }) {
-      const [stage, setStage] = React.useState('idle');  // idle | configure | uploading | done | error
-      const [progress, setProgress] = React.useState(0);
-      const [filename, setFilename] = React.useState('');
-      const [pages, setPages] = React.useState(0);
-      const [steer, setSteer] = React.useState('');
-      const [focusAreas, setFocusAreas] = React.useState([]);
-      const [selectedFile, setSelectedFile] = React.useState(null);
-      const [uploadError, setUploadError] = React.useState('');
-      const fileInputRef = React.useRef(null);
-
-      const toggleArea = (a) => {
-        setFocusAreas(arr => arr.includes(a) ? arr.filter(x => x !== a) : [...arr, a]);
-      };
-
-      const resetUpload = () => {
-        setStage('idle');
-        setProgress(0);
-        setFilename('');
-        setPages(0);
-        setSelectedFile(null);
-        setUploadError('');
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      };
-
-      const startAnalysis = async () => {
-        if (!selectedFile) return;
-        setProgress(10);
-        setStage('uploading');
-        setUploadError('');
-        try {
-          const fd = new FormData();
-          fd.append('files', selectedFile);
-          const uploadHeaders = {};
-          const uploadToken = localStorage.getItem('legal_ai_token');
-          if (uploadToken) uploadHeaders['Authorization'] = 'Bearer ' + uploadToken;
-          const res = await fetch('/api/upload', { method: 'POST', headers: uploadHeaders, body: fd });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err?.detail?.message || `Upload failed: ${res.status}`);
-          }
-          const data = await res.json();
-          setProgress(100);
-          setStage('done');
-          const newDocId = data.documents?.[0]?.document_id || data.document_id || data.run_id;
-          if (newDocId) {
-            window._lastUploadedDocId = newDocId;
-            localStorage.setItem('op_selected_doc', newDocId);
-            window.location.assign('/operator.html#doc=' + encodeURIComponent(newDocId));
-          }
-        } catch (err) {
-          setStage('error');
-          setUploadError(err?.message || 'Upload failed');
-          console.error('Upload failed:', err);
-        }
-      };
-
       return (
         <div
           id="panel-upload-modal"
@@ -166,7 +70,7 @@
             fontFamily:'Inter, system-ui, sans-serif', maxHeight:'88vh', overflowY:'auto' }}>
             <div style={{ fontSize:10.5, letterSpacing:'.12em', textTransform:'uppercase',
               color:'#8A8A82', fontWeight:600, marginBottom:6 }}>
-              {stage === 'configure' ? 'Review & start analysis' : 'Upload to current matter'}
+              Upload to current matter
             </div>
             {debugIds && (
               <div style={{
@@ -178,161 +82,14 @@
               </div>
             )}
             <h2 style={{ fontFamily:'Source Serif Pro, serif', fontSize:22, margin:'0 0 6px', fontWeight:500, letterSpacing:'-0.018em' }}>
-              {stage === 'configure'
-                ? 'Anything we should focus on?'
-                : 'Add a document to ' + (matterName || 'this matter')}
+              Document upload unavailable
             </h2>
-            {stage === 'idle' && (
-              <p style={{ margin:'0 0 18px', fontSize:13, color:'#4A4A45', lineHeight:1.5 }}>
-                Documents are encrypted in transit and held on-premise. Only canonical names,
-                citations and ABNs may leave the network for verification.
-              </p>
-            )}
-            {stage === 'configure' && (
-              <p style={{ margin:'0 0 16px', fontSize:13, color:'#4A4A45', lineHeight:1.5 }}>
-                You can leave this blank — the system always produces the full set of artifacts.
-                Adding focus areas helps the synthesis agents weight specific issues in the memo.
-              </p>
-            )}
-
-            {stage === 'idle' && (
-              <>
-                <input
-                  type="file"
-                  accept=".pdf,.docx,.rtf"
-                  style={{ display: 'none' }}
-                  ref={fileInputRef}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setSelectedFile(f);
-                    setFilename(f.name);
-                    setPages(0);
-                    setUploadError('');
-                    setStage('configure');
-                  }}
-                />
-                <div onClick={() => fileInputRef.current?.click()} style={{
-                  border:'1.5px dashed #E8E6DF', borderRadius:10, padding:'28px 18px', textAlign:'center',
-                  cursor:'pointer', transition:'all .12s', marginBottom:14 }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#3F5E5A'; e.currentTarget.style.background = '#E6EEEC'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#E8E6DF'; e.currentTarget.style.background = 'transparent'; }}>
-                  <div style={{ color:'#3F5E5A', marginBottom: 8 }}>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                      <path d="M12 4v12m0-12L8 8m4-4l4 4M4 18v2h16v-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </div>
-                  <div style={{ fontSize:13.5, color:'#1B1B19', fontWeight:500 }}>Drop a file here, or click to browse</div>
-                  <div style={{ fontSize:11.5, color:'#8A8A82', marginTop:4 }}>PDF · DOCX · RTF · max 5,000 pages · max 500 MB</div>
-                </div>
-                <div style={{ fontSize:11.5, color:'#8A8A82', display:'flex', alignItems:'flex-start', gap:6 }}>
-                  <span style={{ flexShrink:0 }}>ℹ</span>
-                  <span>Analysis typically completes in 14–20 hours for documents in the 4,000–5,000 page range. You'll be notified when the chronology and people register are ready (usually within the first 6 hours).</span>
-                </div>
-              </>
-            )}
-
-            {stage === 'configure' && (
-              <>
-                <div className="lw-up-card">
-                  <span className="ic">
-                    <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-                      <path d="M3 1.5h7l3 3v10A.5.5 0 0112.5 15h-9A.5.5 0 013 14.5v-13A.5.5 0 013.5 1z" stroke="currentColor" strokeWidth="1.3"/>
-                      <path d="M10 1.5v3.5h3M5 8h6M5 10.5h6M5 13h4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
-                    </svg>
-                  </span>
-                  <div style={{ minWidth:0, flex:1 }}>
-                    <div className="nm">{filename}</div>
-                    <div className="sub">{pages ? pages.toLocaleString() + ' pages · ' : 'Pages pending backend analysis · '}{selectedFile?.type || 'Document'}</div>
-                  </div>
-                </div>
-
-                <div className="lw-steer">
-                  <label>
-                    Focus areas
-                    <span className="opt">optional · helps the synthesis agents prioritise</span>
-                  </label>
-                  <textarea value={steer} onChange={e => setSteer(e.target.value)}
-                    placeholder="e.g. We're particularly interested in any clauses dealing with class certification thresholds, and any inconsistency in the dates the algorithm went live. Flag anything that touches on procedural fairness." />
-                  <div className="lw-steer-chips">
-                    {SUGGEST_FOCUS.map(a => (
-                      <button key={a} className={"lw-steer-chip " + (focusAreas.includes(a) ? 'active' : '')}
-                              onClick={() => toggleArea(a)}>
-                        {focusAreas.includes(a) ? '✓ ' : '+ '}{a}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="hint">
-                    Whatever you say here is added to the agents' working context.
-                    Once the analysis starts, any further changes happen through the chat — ask
-                    "rerun the entities pass focusing on…" and the workflow picks it up.
-                  </div>
-                </div>
-
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:18 }}>
-                  <button onClick={resetUpload} className="lw-btn ghost" style={{ width:'auto' }}>← Pick a different file</button>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <button onClick={onClose} className="lw-btn" style={{ width:'auto', padding:'9px 14px' }}>Cancel</button>
-                    <button onClick={() => startAnalysis()} className="lw-btn primary" style={{ width:'auto', padding:'9px 16px' }}>Start analysis →</button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {stage === 'uploading' && (
-              <div style={{ padding:'6px 0 14px' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, marginBottom:6 }}>
-                  <b style={{ fontWeight:500 }}>{filename}</b>
-                  <span style={{ fontFamily:'JetBrains Mono', color:'#8A8A82' }}>{progress}%</span>
-                </div>
-                <div style={{ height:6, background:'#F0EEE7', borderRadius:99, overflow:'hidden' }}>
-                  <div style={{ width: progress+'%', height:'100%', background:'#3F5E5A', transition:'width .12s' }} />
-                </div>
-                <div style={{ fontSize:11.5, color:'#8A8A82', marginTop:8, fontFamily:'JetBrains Mono' }}>
-                  Uploading · encrypted · holding text local
-                </div>
-              </div>
-            )}
-
-            {stage === 'done' && (
-              <div style={{ padding:'6px 0 4px' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
-                  <span style={{ width:24, height:24, borderRadius:'50%', background:'#E6F3EA', color:'#2F7A43', display:'inline-flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>✓</span>
-                  <b style={{ fontSize:13, fontWeight:500 }}>Upload complete — analysis queued</b>
-                </div>
-                <p style={{ margin:'0 0 14px', fontSize:13, color:'#4A4A45', lineHeight:1.55 }}>
-                  <b>{filename}</b> has been added to the matter.
-                  {(steer.trim() || focusAreas.length > 0) && <> Your focus areas{focusAreas.length>0 && <>
-                    {' '}(<i style={{ color:'#3F5E5A' }}>{focusAreas.join(', ')}{steer.trim() && ' + free-text'}</i>)
-                  </>}{!focusAreas.length && steer.trim() && <> have been passed to the agents</>}{' '}will be used as context for the synthesis pass.</>}
-                  {' '}Chronology and people register typically arrive first, followed by the legal memo in 14–20 hours.
-                </p>
-                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
-                  <button onClick={onClose} className="lw-btn primary" style={{ width:'auto', padding:'9px 16px' }}>Done</button>
-                </div>
-              </div>
-            )}
-
-            {stage === 'error' && (
-              <div style={{ padding:'6px 0 4px' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
-                  <span style={{ width:24, height:24, borderRadius:'50%', background:'#F8E8E6', color:'#A33A2B', display:'inline-flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>!</span>
-                  <b style={{ fontSize:13, fontWeight:500 }}>Upload failed — please try again</b>
-                </div>
-                <p style={{ margin:'0 0 14px', fontSize:13, color:'#4A4A45', lineHeight:1.55 }}>
-                  {uploadError || 'No error details were returned.'}
-                </p>
-                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
-                  <button onClick={resetUpload} className="lw-btn primary" style={{ width:'auto', padding:'9px 16px' }}>Retry</button>
-                </div>
-              </div>
-            )}
-
-            {stage === 'idle' && (
-              <div style={{ display:'flex', justifyContent:'flex-end', marginTop:14 }}>
-                <button onClick={onClose} className="lw-btn" style={{ width:'auto', padding:'8px 14px' }}>Cancel</button>
-              </div>
-            )}
+            <p style={{ margin:'0 0 18px', fontSize:13, color:'#4A4A45', lineHeight:1.5 }}>
+              Upload is unavailable in this static lawyer build. Use the operator ingestion workflow to add documents to {matterName || 'this matter'}.
+            </p>
+            <div style={{ display:'flex', justifyContent:'flex-end', marginTop:14 }}>
+              <button onClick={onClose} className="lw-btn primary" style={{ width:'auto', padding:'9px 16px' }}>Close</button>
+            </div>
           </div>
         </div>
       );

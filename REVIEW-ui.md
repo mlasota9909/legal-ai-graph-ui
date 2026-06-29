@@ -50,6 +50,15 @@
 - **Linear:** `MAC-39` created under `MAC-16`, labelled `ui`, status `Done`.
 - **Deferred:** U5/U6 static/query-scope parity and U7 EvidencePanel seed/fallback safety remain open.
 
+### 2026-06-30 — UI Codex U5 static trace/upload parity
+
+- **U5 partially actioned:** static lawyer trace debug no longer fetches legacy `/api/docs/{docId}/trace`; it renders explicit unavailable copy.
+- **U5 partially actioned:** static lawyer upload modal no longer exposes a file picker or calls legacy `/api/upload`; it renders explicit unavailable copy directing users to operator ingestion.
+- **Tests run:** `npx tsc --noEmit` passed; `npm run build` passed; `rg -n "source_uri" src static` returned no matches; `rg -n "/api/upload|/api/docs/.*/trace|/trace" static` returned no matches; focused Playwright static trace/upload test passed; broader static lawyer grep passed 3/3.
+- **Files changed:** `static/lawyer.html`, `src/__tests__/crossscreen.spec.ts`, `CLAUDE-HANDOFF.md`, `REVIEW-ui.md`, `CLAUDE.md`.
+- **Linear:** `MAC-48` created under `MAC-16`, labelled `ui`, status `Done`.
+- **Deferred:** U7 EvidencePanel seed/fallback safety remains open. Query-scope follow-up is only needed if Architect/Core move normal Ask from `document_id` to another public scope such as `pack_id`.
+
 ## 1. Executive summary
 
 - Overall UI alignment with VISION.md: The SPA mostly behaves as a projection surface over backend APIs, with real register rows, summary panels, evidence graph navigation, source badges, and post-run review concepts. The main gaps are source-badge honesty and contract drift.

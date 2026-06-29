@@ -11,6 +11,7 @@ UI chat action batches for review items U1, U2, U4, and U3 source honesty:
 - U1/U2: remove browser-facing `source_uri` use and normalize GraphRAG query source badges after backend contract v0.2.5/v0.2.6.
 - U4: add doc-scoped stale response guards for activity, summary, and pipeline state in `useWorkspace`.
 - U3: fix Atrium list source derivation, add Lattice KPI/agreement field source metadata, make DocumentPicker fallback counts non-real/unavailable when `/api/status` lacks `graph_counts`, and stop augmentation provider rows from falling back to seed counts when source keys are omitted.
+- U5: mark legacy static lawyer trace/upload seams unavailable instead of calling `/trace` or `/api/upload`.
 
 Pre-existing dirty files before edits: untracked `.logs/`, `.opencode-runs/`, `REVIEW-ui.md`.
 
@@ -38,6 +39,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - U3 actioned in part: Lattice claims/conflicts/human-queue KPI cells and agreement columns now use field-level source metadata instead of hardcoded/global source badges.
 - U3 actioned in part: DocumentPicker `/api/status` fallback no longer badges fabricated zero claim counts as real.
 - U3 actioned in part: Atrium and Lattice augmentation provider rows now use only `graph_counts.external_sources_by_source`; omitted keys render as `unavailable` with a mock badge.
+- U5 actioned in part: static lawyer trace debug and upload controls now show unavailable copy and no longer call legacy `/trace` or `/api/upload` endpoints.
 
 ## Files changed
 
@@ -47,6 +49,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - `src/components/lattice/LatticeDashboard.tsx`
 - `src/components/query/AskPanel.tsx`
 - `static/lawyer-app.jsx`
+- `static/lawyer.html`
 - `src/__tests__/crossscreen.spec.ts`
 - `REVIEW-ui.md`
 - `CLAUDE-HANDOFF.md`
@@ -59,7 +62,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Public provenance is path-safe; raw `source_uri` is server-only and should not appear in public API/UI responses.
 - `/api/query` returns `data_source="real"` for evidence-backed GraphRAG answers and may include `answer_basis="retrieved_evidence"`.
 - `/api/status/{docId}` exposes real `graph_counts.data_source` and `kpi_metrics.*_data_source` for the fields now badged as real.
-- Query scope policy is still unchanged in this UI batch; normal Ask still uses the existing namespace flow until Architect/Core publishes the public-scope decision.
+- Normal Ask sends `document_id` by default; raw namespace is only a transitional fallback when no document id is available. `pack_id` remains an Architect/Core decision if the public scope changes again.
 
 ## BRIDGE updates
 
@@ -74,6 +77,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Created `MAC-37` (`[UI] Review action: fix Atrium list source badge derivation`) under `MAC-16`, label `ui`, status `Done`.
 - Created `MAC-38` (`[UI] Review action: make Lattice and pack picker source badges field-accurate`) under `MAC-16`, label `ui`, status `Done`.
 - Created `MAC-39` (`[UI] Review action: stop inventing augmentation provider counts`) under `MAC-16`, label `ui`, status `Done`.
+- Created `MAC-48` (`[UI] Static lawyer app marks legacy trace/upload seams unavailable`) under `MAC-16`, label `ui`, status `Done`.
 
 ## Tests run
 
@@ -90,6 +94,9 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - `npx playwright test src/__tests__/crossscreen.spec.ts --reporter=line`: attempted full 24-test final run, interrupted after backend API process exited with Ray GCS failure; partial result 10 passed, 6 failed real-doc setup timeouts, 1 interrupted, 7 did not run.
 - `npx playwright test src/__tests__/crossscreen.spec.ts -g 'atrium augmentation provider rows do not invent omitted source counts|lattice KPI and agreement source badges follow backend fields' --reporter=line`: pass, 2/2.
 - Opencode local worker ran `npx playwright test src/__tests__/crossscreen.spec.ts -g 'atrium augmentation provider rows do not invent omitted source counts' --reporter=line`: pass.
+- `PLAYWRIGHT_PORT=5183 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "static lawyer legacy trace and upload seams are unavailable" --reporter=line`: pass.
+- `PLAYWRIGHT_PORT=5183 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "static lawyer (legacy trace and upload seams are unavailable|app loads matter list|chat handles query_backend_unavailable)" --reporter=line`: pass, 3/3.
+- `rg -n "/api/upload|/api/docs/.*/trace|/trace" static`: no matches.
 - `git diff --check`: pass.
 
 ## Results
@@ -104,10 +111,11 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Lattice KPI/agreement badges now follow field-level sources from `graph_counts`/`kpi_metrics`.
 - DocumentPicker fallback rows show `claims unavailable` with a mock badge when `/api/status` lacks `graph_counts`, avoiding fabricated real zero counts.
 - Atrium and Lattice augmentation provider rows show real counts only for keys present in `external_sources_by_source`; omitted providers show `unavailable` and a mock badge.
+- Static lawyer trace debug shows `Trace debugging is unavailable in static mode.` and does not fetch legacy trace JSON.
+- Static lawyer upload shows `Document upload unavailable` / `Upload is unavailable in this static lawyer build...` and no longer exposes a file picker or `/api/upload` call.
 
 ## Remaining risks
 
-- Unknown future `data_source` values still display as `mock` because `SourceDot` has no unavailable/error state.
 - Full crossscreen verification depends on a long-lived backend API process on `localhost:8090`; the backend daemon exited twice during long runs with Ray GCS failure.
 - Historical review text still mentions `source_uri`; source grep is clean.
 - Register/status fetches already had cancellation guards before this run; this batch did not broaden stale-response testing to every possible status/register path.
@@ -115,7 +123,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 
 ## Architect decisions needed
 
-- Public query scope policy remains open from REVIEW-architect S3: normal lawyer Ask should move from raw namespace to `pack_id` or `document_id` after Core/Architect decide and enforce the contract.
+- Public query scope is currently `document_id` for normal lawyer Ask. Revisit only if Architect/Core move the public scope to `pack_id` or another matter-level identifier.
 - Decide whether `SourceDot` should gain an explicit unavailable/contract-error state rather than mapping unknown API `data_source` values to `mock`.
 
 ## Backend/Core follow-up needed
@@ -125,9 +133,9 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 
 ## Deferred review items
 
-- U5/U6 static endpoint/query-scope parity beyond source badge handling.
 - U7 EvidencePanel seed/fallback safety.
+- Static synthesis remains mock-only but honestly badged; broader static artifact parity is still roadmap.
 
 ## Exact next recommended task
 
-Move to U5 static app parity: remove or clearly mark old `/trace` and `/api/upload` seams, keeping query-scope changes deferred until Architect/Core decide the public scope.
+Move to U7 EvidencePanel seed/fallback safety: ensure absent seed chunks/nodes render an explicit unavailable state without inventing graph relationships.

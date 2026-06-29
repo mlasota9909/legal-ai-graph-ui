@@ -661,6 +661,76 @@ test('static lawyer app data_source is real', async ({ page }) => {
   await expect(realSourceResponse).resolves.toBeTruthy()
 })
 
+test('static lawyer legacy trace and upload seams are unavailable', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  const docId = 'static_unavailable_doc'
+  let uploadCalled = false
+  let traceCalled = false
+
+  await page.route('**/api/matters', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        matters: [{ id: docId, title: 'Static Unavailable Matter', namespace: 'static_unavailable_ns' }],
+      }),
+    })
+  })
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        label: 'Static Unavailable Matter',
+        data_source: 'real',
+        graph_namespace: 'static_unavailable_ns',
+      }),
+    })
+  })
+  await page.route(`**/api/registers/${docId}**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data_source: 'real', rows: [] }),
+    })
+  })
+  await page.route(`**/api/docs/${docId}/feedback`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ adjudications: [] }),
+    })
+  })
+  await page.route('**/api/upload', async (route) => {
+    uploadCalled = true
+    await route.fulfill({ status: 500, body: '{}' })
+  })
+  await page.route('**/api/docs/*/trace', async (route) => {
+    traceCalled = true
+    await route.fulfill({ status: 500, body: '{}' })
+  })
+
+  await page.goto(STATIC_LAWYER_URL)
+  await waitForStaticLawyerMatterList(page)
+
+  await page.getByRole('button', { name: /Upload a document/i }).click()
+  await expect(page.getByText('Document upload unavailable')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText(/Upload is unavailable in this static lawyer build/i)).toBeVisible()
+  await expect(page.locator('input[type="file"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Close' }).click()
+
+  await firstStaticLawyerSidebarItem(page).click()
+  const tracePanel = page.locator('details[data-panel-id*="trace-debug"]').first()
+  await expect(tracePanel).toBeVisible({ timeout: 10000 })
+  await tracePanel.locator('summary').click()
+  await expect(page.getByText('Trace debugging is unavailable in static mode.')).toBeVisible()
+
+  expect(uploadCalled).toBe(false)
+  expect(traceCalled).toBe(false)
+})
+
 test('static lawyer chat handles query_backend_unavailable degraded query response', async ({ page }) => {
   await serveStaticLawyerJsxAsRaw(page)
   await page.route('**/api/query', async (route) => {
