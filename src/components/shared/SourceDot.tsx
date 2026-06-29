@@ -1,3 +1,4 @@
+import { DATA_SOURCE_LABELS } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
 interface SourceDotProps {
@@ -9,13 +10,15 @@ const COLORS: Record<DataSource, string> = {
   real: '#22c55e',
   simulated: '#eab308',
   mock: '#ef4444',
+  unavailable: '#64748b',
+  unknown: '#8b5cf6',
 }
 
 export function SourceDot({ source, show }: SourceDotProps) {
   return (
     <span
       aria-hidden="true"
-      title={`${source} data`}
+      title={DATA_SOURCE_LABELS[source]}
       style={{
         backgroundColor: COLORS[source],
         display: show ? 'inline-block' : 'inline-block',

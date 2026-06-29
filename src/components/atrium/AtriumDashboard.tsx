@@ -579,7 +579,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const courtListenerEdgarCount =
     courtListenerCount == null && edgarCount == null ? null : (courtListenerCount ?? 0) + (edgarCount ?? 0)
   const sourceCountText = (value: number | null) => value == null ? 'unavailable' : value.toLocaleString()
-  const sourceCountKind = (value: number | null) => value == null ? 'mock' : 'real'
+  const sourceCountKind = (value: number | null) => value == null ? 'unavailable' : 'real'
 
   const filteredChronology = useMemo(
     () =>

@@ -18,6 +18,7 @@ import type {
   WorkspaceData,
 } from '../types/contracts'
 import type { ListStatusFilter } from '../types/listFilter'
+import { parseOptionalDataSource } from '../utils/dataSource'
 import type { DataSource } from '../utils/dataSource'
 
 const VIEW_SEGMENTS: Record<string, ArtifactView> = {
@@ -88,8 +89,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseDataSource(value: string | null | undefined): DataSource | undefined {
-  if (value === 'real' || value === 'simulated' || value === 'mock') return value
-  return undefined
+  return parseOptionalDataSource(value)
 }
 
 function parseView(pathname: string): ArtifactView {

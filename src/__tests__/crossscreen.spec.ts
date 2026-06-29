@@ -208,7 +208,7 @@ test('document picker fallback does not badge fabricated zero counts as real', a
   const fallbackRow = page.locator('button', { hasText: 'Fallback document' }).first()
   await expect(fallbackRow).toBeVisible({ timeout: 10000 })
   await expect(fallbackRow).toContainText('claims unavailable')
-  await expect(fallbackRow.locator('[title="mock data"]')).toBeVisible()
+  await expect(fallbackRow.locator('[title="source unavailable"]')).toBeVisible()
   await expect(fallbackRow.locator('[title="real data"]')).toHaveCount(0)
 })
 
@@ -250,34 +250,52 @@ test('atrium list artifact source badge follows real active rows', async ({ page
 })
 
 test('atrium augmentation provider rows do not invent omitted source counts', async ({ page }) => {
-  await page.route('**/api/status/original_royalcomm', async (route) => {
-    const response = await route.fetch()
-    const payload = await response.json()
+  const docId = DEFAULT_REAL_DOC_ID
+  const statusDoc = {
+    document_id: docId,
+    label: 'Mocked augmentation status',
+    graph_namespace: 'mocked_augmentation_ns',
+    page_count: 1,
+    pipeline_stage: 'completed',
+    upload_ts: '2026-06-29T00:00:00Z',
+    graph_counts: {
+      claims_total: 1,
+      entities_total: 1,
+      persons_total: 1,
+      events_total: 1,
+      external_sources: 3,
+      evidenced_by_external_edges: 3,
+      external_sources_by_source: { austlii: 3 },
+      data_source: 'real',
+    },
+  }
+
+  await page.route('**/api/status', async (route) => {
     await route.fulfill({
-      response,
+      status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        ...payload,
-        graph_counts: {
-          ...payload.graph_counts,
-          external_sources: 3,
-          evidenced_by_external_edges: 3,
-          external_sources_by_source: { austlii: 3 },
-          data_source: 'real',
-        },
+        data_source: 'real',
+        documents: [statusDoc],
       }),
     })
   })
 
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(statusDoc),
+    })
+  })
+
   await page.goto(`/runs/${docId}/chronology`)
   await page.locator('button', { hasText: 'Sources' }).first().click()
 
   await expect(page.locator('[data-source-label="Augmentation austlii"]')).toContainText('3')
   await expect(page.locator('[data-source-label="Augmentation austlii"] [title="real data"]')).toBeVisible()
   await expect(page.locator('[data-source-label="Augmentation eyecite"]')).toContainText('unavailable')
-  await expect(page.locator('[data-source-label="Augmentation eyecite"] [title="mock data"]')).toBeVisible()
+  await expect(page.locator('[data-source-label="Augmentation eyecite"] [title="source unavailable"]')).toBeVisible()
   await expect(page.locator('[data-source-label="Augmentation eyecite"]')).not.toContainText('312')
   await expect(page.locator('[data-source-label="Augmentation companies_house"]')).toContainText('unavailable')
 })
@@ -802,4 +820,69 @@ test('AskPanel query request uses document_id and not namespace', async ({ page 
   // Assert namespace and namespaces are NOT present
   expect(body.namespace).toBeUndefined()
   expect(body.namespaces).toBeUndefined()
+})
+
+test('AskPanel renders unknown source state for future data_source values', async ({ page }) => {
+  const TEST_DOC_ID = 'test_doc_unknown_source'
+
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [
+          {
+            document_id: TEST_DOC_ID,
+            label: 'Unknown Source Test Document',
+            graph_namespace: null,
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.route(`**/api/status/${TEST_DOC_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: TEST_DOC_ID,
+        label: 'Unknown Source Test Document',
+        data_source: 'real',
+        graph_namespace: null,
+      }),
+    })
+  })
+
+  await page.route('**/api/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'future_backend_state',
+        answer_basis: null,
+        answer: 'Test answer grounded in the mocked query response.',
+        citations: [],
+        supporting_subgraph: {},
+        validation_status: 'supported',
+        confidence: 0.5,
+        retrieval_debug: {},
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${TEST_DOC_ID}/ask`)
+
+  const textarea = page.locator('textarea').first()
+  await expect(textarea).toBeVisible({ timeout: 10000 })
+  await textarea.fill('What is the source state?')
+
+  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 5000 })
+  await submitButton.click()
+
+  await expect(page.getByText('unknown source state')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('[title="unknown source state"]')).toBeVisible()
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 })

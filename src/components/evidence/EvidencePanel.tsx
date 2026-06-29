@@ -8,6 +8,7 @@ import type {
   RegisterResponse,
   RegisterType,
 } from '../../types/contracts'
+import { parseDataSource as parseSourceData } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
 interface EvidencePanelProps {
@@ -54,8 +55,7 @@ function linkLabel(edge: GraphEdge): string {
 }
 
 function parseDataSource(value: string | undefined): DataSource {
-  if (value === 'real' || value === 'simulated') return value
-  return 'mock'
+  return parseSourceData(value)
 }
 
 function authHeaders(): HeadersInit {

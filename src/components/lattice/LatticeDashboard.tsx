@@ -3,6 +3,7 @@ import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksL
 import { useNav } from '../../context/NavContext'
 import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
 import { SourceDot } from '../shared/SourceDot'
+import { parseDataSource } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
 interface LatticeDashboardProps {
@@ -14,8 +15,8 @@ const ACTIVITY_FILTERS = ['all', 'conflicts', 'decisions', 'claims', 'entity', '
 type ActivityFilter = (typeof ACTIVITY_FILTERS)[number]
 
 function sourceFrom(value: unknown): DataSource | undefined {
-  if (value === 'real' || value === 'simulated' || value === 'mock') return value
-  return undefined
+  if (value == null || value === '') return undefined
+  return parseDataSource(value)
 }
 
 function countFrom(record: Record<string, unknown> | null | undefined, key: string): number {
@@ -32,7 +33,7 @@ function sourceCountText(value: number | null): string {
 }
 
 function sourceCountKind(value: number | null): DataSource {
-  return value == null ? 'mock' : 'real'
+  return value == null ? 'unavailable' : 'real'
 }
 
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
@@ -75,8 +76,8 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
                 persons_total: countFrom(doc.graph_counts, 'persons_total'),
                 events_total: countFrom(doc.graph_counts, 'events_total'),
               },
-              data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'mock',
-              counts_data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'mock',
+              data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'unavailable',
+              counts_data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'unavailable',
             }))
           }
         }
@@ -117,7 +118,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
         <div className="absolute left-0 top-full z-20 mt-2 w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] shadow-lg">
           {packs.map((pack) => {
             const docId = pack.document_ids[0]
-            const countsSource = pack.counts_data_source ?? sourceFrom(pack.data_source) ?? 'mock'
+            const countsSource = pack.counts_data_source ?? sourceFrom(pack.data_source) ?? 'unavailable'
             return (
               <button
                 type="button"
@@ -137,7 +138,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
                     {pack.name ?? pack.pack_id}
                   </span>
                   <span className="font-mono text-[10.5px] text-[var(--ink-3)]">
-                    {countsSource === 'mock' && pack.counts.claims_total === 0
+                    {countsSource === 'unavailable' && pack.counts.claims_total === 0
                       ? 'claims unavailable'
                       : `${pack.counts.claims_total.toLocaleString()} claims`}
                     <SourceDot source={countsSource} show={nav?.showSources ?? false} />

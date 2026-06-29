@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { useNav } from '../../context/NavContext'
 import { SourceDot } from '../shared/SourceDot'
 import type { QueryCitation, QueryResponse } from '../../types/contracts'
+import { DATA_SOURCE_LABELS, parseDataSource as parseSourceData } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
 interface AskPanelProps {
@@ -14,10 +15,8 @@ interface AskPanelProps {
 type ValidationStatus = 'supported' | 'partial' | 'unsupported'
 
 function parseDataSource(value: string | undefined | null, answerBasis?: string | null): DataSource {
-  if (value === 'real' || value === 'simulated' || value === 'mock') return value
   if (value === 'retrieved_evidence' || answerBasis === 'retrieved_evidence') return 'real'
-  // ponytail: SourceDot has no unavailable state; keep truly unknown API values visibly non-real.
-  return 'mock'
+  return parseSourceData(value)
 }
 
 function parseValidationStatus(value: string | undefined): ValidationStatus {
@@ -175,7 +174,7 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
           <h1 className="font-serif text-[22px] font-medium tracking-tight">Ask the evidence</h1>
           {response && (
             <span className="ml-auto flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
-              {dataSource} data
+              {DATA_SOURCE_LABELS[dataSource]}
               <SourceDot source={dataSource} show />
             </span>
           )}

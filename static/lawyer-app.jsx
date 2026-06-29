@@ -1127,8 +1127,16 @@ function _claimArtifact(claimId) {
 
 function queryDataSource(value, answerBasis) {
   if (value === 'real' || value === 'simulated' || value === 'mock') return value;
+  if (value === 'unavailable' || value === 'unknown') return value;
   if (value === 'retrieved_evidence' || answerBasis === 'retrieved_evidence') return 'real';
-  return 'mock';
+  if (value == null || value === '') return 'unavailable';
+  return 'unknown';
+}
+
+function dataSourceLabel(value) {
+  if (value === 'unavailable') return 'source unavailable';
+  if (value === 'unknown') return 'unknown source state';
+  return value;
 }
 
 function ChatDock({ onCite, docId, currentNamespace }) {
@@ -1191,7 +1199,7 @@ function ChatDock({ onCite, docId, currentNamespace }) {
           <div key={turn.id} className={"lw-chat-turn " + turn.who}>
             <span className="lw-chat-byline">
               {turn.who === 'user' ? 'You' : 'Atrium'} · {turn.t}
-              {turn.who === 'assistant' && turn.dataSource && <span className="lw-chat-source">{turn.dataSource}</span>}
+              {turn.who === 'assistant' && turn.dataSource && <span className="lw-chat-source">{dataSourceLabel(turn.dataSource)}</span>}
             </span>
             <div className={"lw-chat-bubble" + (turn.loading ? ' loading' : '')}>{turn.text}</div>
             {turn.cites && (
