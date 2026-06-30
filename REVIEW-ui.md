@@ -59,6 +59,16 @@
 - **Linear:** `MAC-48` created under `MAC-16`, labelled `ui`, status `Done`.
 - **Deferred:** U7 EvidencePanel seed/fallback safety remains open. Query-scope follow-up is only needed if Architect/Core move normal Ask from `document_id` to another public scope such as `pack_id`.
 
+### 2026-06-30 — UI Codex U7 EvidencePanel fallback safety
+
+- **U7 actioned:** EvidencePanel now renders explicit unavailable states for missing graph namespace, missing seed/provenance, non-OK `/api/graph` responses, and empty graph responses.
+- **U7 actioned:** unknown future graph `data_source` values render through the shared `unknown source state` badge instead of mock.
+- **U7 actioned:** `useWorkspace` clears stale graph namespace on document selection/popstate and when `/api/status/{docId}` returns no usable `graph_namespace`, avoiding queries against a previous document namespace.
+- **Tests run:** `npx tsc --noEmit` passed; `npm run build` passed; `rg -n "source_uri" src static` returned no matches; focused backend-independent Playwright MAC-49 grep passed 5/5; wider EvidencePanel grep passed 5 mocked tests and failed the one live-backend test because Core was not listening on `localhost:8090`.
+- **Files changed:** `src/components/evidence/EvidencePanel.tsx`, `src/hooks/useWorkspace.ts`, `src/__tests__/crossscreen.spec.ts`, `CLAUDE-HANDOFF.md`, `REVIEW-ui.md`, `CLAUDE.md`.
+- **Linear:** `MAC-49` labelled `ui`, status `Done`.
+- **Deferred:** live EvidencePanel tests still depend on a hardcoded/default real document path; `MAC-51` tracks making that discovery dynamic.
+
 ## 1. Executive summary
 
 - Overall UI alignment with VISION.md: The SPA mostly behaves as a projection surface over backend APIs, with real register rows, summary panels, evidence graph navigation, source badges, and post-run review concepts. The main gaps are source-badge honesty and contract drift.

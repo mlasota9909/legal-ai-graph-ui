@@ -415,6 +415,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
 
   const selectRun = useCallback((documentId: string) => {
     setDocId(documentId)
+    setNamespace(null)
     setView('monitor')
     setHighlight(null)
     setListFilter('all')
@@ -455,6 +456,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     const onPop = () => {
       const next = parseRoute(defaultDocId)
       setDocId(next.docId)
+      setNamespace(null)
       setView(next.view)
     }
     window.addEventListener('popstate', onPop)
@@ -469,9 +471,11 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
         const status = await fetchJson<StatusDocument>(`/api/status/${encodeURIComponent(docId)}`)
         if (cancelled || !isRecord(status)) return
         setData((prev) => applyStatus(prev, status))
-        if (isRecord(status) && status.graph_namespace && typeof status.graph_namespace === 'string') {
-          setNamespace(status.graph_namespace)
-        }
+        setNamespace(
+          typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
+            ? status.graph_namespace
+            : null
+        )
       } catch {
         if (!cancelled) {
           setData((prev) => ({ ...prev, isRealData: false }))

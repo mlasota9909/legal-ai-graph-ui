@@ -8,7 +8,7 @@ import type {
   RegisterResponse,
   RegisterType,
 } from '../../types/contracts'
-import { parseDataSource as parseSourceData } from '../../utils/dataSource'
+import { DATA_SOURCE_LABELS, parseDataSource as parseSourceData } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
 interface EvidencePanelProps {
@@ -18,7 +18,13 @@ interface EvidencePanelProps {
   onBack: () => void
 }
 
-type LoadPhase = 'waiting-namespace' | 'loading' | 'error' | 'empty' | 'ready'
+type LoadPhase =
+  | 'namespace-unavailable'
+  | 'loading'
+  | 'empty'
+  | 'seed-unavailable'
+  | 'graph-unavailable'
+  | 'ready'
 
 const NODE_COLORS: Record<string, string> = {
   PERSON: '#60a5fa',
@@ -54,8 +60,30 @@ function linkLabel(edge: GraphEdge): string {
   return edge.type
 }
 
-function parseDataSource(value: string | undefined): DataSource {
+function parseDataSource(value: unknown): DataSource {
   return parseSourceData(value)
+}
+
+const UNAVAILABLE_COPY: Record<
+  Exclude<LoadPhase, 'loading' | 'ready'>,
+  { title: string; body: string }
+> = {
+  'namespace-unavailable': {
+    title: 'Evidence graph unavailable',
+    body: 'No graph namespace is available for this document.',
+  },
+  'seed-unavailable': {
+    title: 'Evidence graph unavailable',
+    body: 'No graph seed could be resolved for this item.',
+  },
+  'graph-unavailable': {
+    title: 'Evidence graph unavailable',
+    body: 'The evidence graph endpoint did not return usable graph data.',
+  },
+  empty: {
+    title: 'Evidence graph unavailable',
+    body: 'The evidence graph endpoint returned no graph nodes for this item.',
+  },
 }
 
 function authHeaders(): HeadersInit {
@@ -95,7 +123,7 @@ async function resolveRootNode(docId: string, claimId: string | null): Promise<s
 
 export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [phase, setPhase] = useState<LoadPhase>(namespace ? 'loading' : 'waiting-namespace')
+  const [phase, setPhase] = useState<LoadPhase>(namespace ? 'loading' : 'namespace-unavailable')
   const [graph, setGraph] = useState<GraphSubgraphResponse | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [depth, setDepth] = useState<GraphDepth>(2)
@@ -124,7 +152,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
 
   useEffect(() => {
     if (!namespace) {
-      setPhase('waiting-namespace')
+      setPhase('namespace-unavailable')
       setGraph(null)
       setSelectedNode(null)
       return
@@ -141,7 +169,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
         const rootNode = await resolveRootNode(docId, claimId)
         if (cancelled) return
         if (!rootNode) {
-          setPhase('empty')
+          setPhase('seed-unavailable')
           return
         }
 
@@ -151,7 +179,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
         const response = await fetch(url, { headers: authHeaders() })
         if (cancelled) return
         if (!response.ok) {
-          setPhase('error')
+          setPhase('graph-unavailable')
           return
         }
 
@@ -165,7 +193,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
         setGraph(data)
         setPhase('ready')
       } catch {
-        if (!cancelled) setPhase('error')
+        if (!cancelled) setPhase('graph-unavailable')
       }
     }
 
@@ -205,14 +233,26 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
     setSelectedNode(node)
   }, [])
 
-  const dataSource = parseDataSource(graph?.data_source)
+  const dataSource = parseDataSource(graph?.data_source ?? 'unavailable')
 
-  if (phase === 'waiting-namespace') {
+  if (phase !== 'loading' && phase !== 'ready') {
+    const copy = UNAVAILABLE_COPY[phase]
     return (
-      <div className="theme-atrium flex min-h-screen items-center justify-center bg-[var(--bg)] text-[var(--ink)]">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--rule)] border-t-[var(--accent)]" />
-          <p className="text-[14px] text-[var(--ink-2)]">Loading...</p>
+      <div className="theme-atrium min-h-screen bg-[var(--bg)] px-10 py-12 text-[var(--ink)]">
+        <button
+          type="button"
+          className="rounded-lg border border-[var(--rule)] bg-[var(--panel)] px-4 py-2 text-[13px] font-medium text-[var(--ink)] shadow-[0_1px_0_var(--rule-soft)] hover:bg-[var(--rule-soft)]"
+          onClick={onBack}
+        >
+          ← Back to monitor
+        </button>
+        <div className="mt-8 max-w-xl rounded-lg border border-[var(--rule)] bg-[var(--panel)] p-5 shadow-[0_1px_0_var(--rule-soft)]">
+          <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
+            {DATA_SOURCE_LABELS.unavailable}
+            <SourceDot source="unavailable" show />
+          </div>
+          <h1 className="font-serif text-[22px] font-medium tracking-tight">{copy.title}</h1>
+          <p className="mt-2 text-[14px] leading-relaxed text-[var(--ink-2)]">{copy.body}</p>
         </div>
       </div>
     )
@@ -229,23 +269,6 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
           ← Back to monitor
         </button>
         <p className="mt-8 text-[14px] text-[var(--ink-2)]">Loading graph...</p>
-      </div>
-    )
-  }
-
-  if (phase === 'error' || phase === 'empty') {
-    return (
-      <div className="theme-atrium min-h-screen bg-[var(--bg)] px-10 py-12 text-[var(--ink)]">
-        <button
-          type="button"
-          className="rounded-lg border border-[var(--rule)] bg-[var(--panel)] px-4 py-2 text-[13px] font-medium text-[var(--ink)] shadow-[0_1px_0_var(--rule-soft)] hover:bg-[var(--rule-soft)]"
-          onClick={onBack}
-        >
-          ← Back to monitor
-        </button>
-        <p className="mt-8 text-[14px] text-[var(--ink-2)]">
-          No relationship data available for this document
-        </p>
       </div>
     )
   }
@@ -284,7 +307,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
             ))}
           </div>
           <span className="ml-auto flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
-            {dataSource} data
+            {DATA_SOURCE_LABELS[dataSource]}
             <SourceDot source={dataSource} show />
           </span>
         </div>

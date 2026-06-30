@@ -1,4 +1,4 @@
-// Cross-screen reconciliation tests — 20 tests
+// Cross-screen reconciliation tests — 36 tests
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -55,6 +55,112 @@ async function waitForRealDoc(page: Page): Promise<string> {
   // Allow one status-poll cycle for data to settle
   await page.waitForTimeout(2000)
   return DEFAULT_REAL_DOC_ID
+}
+
+async function mockEvidencePanelDocument(
+  page: Page,
+  {
+    docId = 'test_evidence_doc',
+    namespace = 'test_evidence_ns',
+    registerRows = [
+      {
+        id: 'seed-row',
+        type: 'authority',
+        entity: {},
+        provenance: [{ chunk_id: 'test:chunk:1', page_start: 1 }],
+      },
+    ],
+  }: {
+    docId?: string
+    namespace?: string | null
+    registerRows?: unknown[]
+  } = {}
+): Promise<string> {
+  const statusDoc = {
+    document_id: docId,
+    label: 'Evidence fallback test document',
+    data_source: 'real',
+    graph_namespace: namespace,
+  }
+
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [statusDoc],
+      }),
+    })
+  })
+
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(statusDoc),
+    })
+  })
+
+  await page.route(`**/api/registers/${docId}**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        namespace,
+        type: 'authority',
+        total: registerRows.length,
+        data_source: 'real',
+        rows: registerRows,
+      }),
+    })
+  })
+
+  await page.route(`**/api/docs/${docId}/summary`, async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'summary_not_generated' } }),
+    })
+  })
+
+  await page.route(`**/api/docs/${docId}/activity`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        data_source: 'real',
+        events: [],
+      }),
+    })
+  })
+
+  await page.route(`**/api/docs/${docId}/pipeline`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        data_source: 'real',
+        stages: [],
+      }),
+    })
+  })
+
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        workers: [],
+      }),
+    })
+  })
+
+  return docId
 }
 
 function parseCount(text: string | null | undefined): number {
@@ -488,6 +594,149 @@ test('evidence panel requests api/graph endpoint', async ({ page }) => {
   await page.waitForTimeout(5000)
 
   expect(captured).toBe(true)
+})
+
+test('EvidencePanel graph fallback shows unavailable when namespace is missing', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'test_evidence_no_namespace',
+    namespace: null,
+  })
+  let graphCalled = false
+
+  await page.route('**/api/graph**', async (route) => {
+    graphCalled = true
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'unexpected_graph_call' } }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+
+  await expect(page.getByText('Evidence graph unavailable')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('No graph namespace is available for this document.')).toBeVisible()
+  await expect(page.locator('[title="source unavailable"]')).toBeVisible()
+  await expect(page.locator('canvas')).toHaveCount(0)
+  expect(graphCalled).toBe(false)
+})
+
+test('EvidencePanel graph fallback shows unavailable when no seed can be resolved', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'test_evidence_no_seed',
+    registerRows: [],
+  })
+  let graphCalled = false
+
+  await page.route('**/api/graph**', async (route) => {
+    graphCalled = true
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'unexpected_graph_call' } }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+
+  await expect(page.getByText('Evidence graph unavailable')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('No graph seed could be resolved for this item.')).toBeVisible()
+  await expect(page.locator('[title="source unavailable"]')).toBeVisible()
+  await expect(page.locator('canvas')).toHaveCount(0)
+  expect(graphCalled).toBe(false)
+})
+
+test('EvidencePanel graph fallback handles graph endpoint 404', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, { docId: 'test_evidence_graph_404' })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'graph_not_found' } }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+
+  await expect(page.getByText('Evidence graph unavailable')).toBeVisible({ timeout: 10000 })
+  await expect(
+    page.getByText('The evidence graph endpoint did not return usable graph data.')
+  ).toBeVisible()
+  await expect(page.locator('[title="source unavailable"]')).toBeVisible()
+  await expect(page.locator('canvas')).toHaveCount(0)
+})
+
+test('EvidencePanel graph fallback handles empty graph responses', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, { docId: 'test_evidence_empty_graph' })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        nodes: [],
+        edges: [],
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+
+  await expect(page.getByText('Evidence graph unavailable')).toBeVisible({ timeout: 10000 })
+  await expect(
+    page.getByText('The evidence graph endpoint returned no graph nodes for this item.')
+  ).toBeVisible()
+  await expect(page.locator('[title="source unavailable"]')).toBeVisible()
+  await expect(page.locator('canvas')).toHaveCount(0)
+})
+
+test('EvidencePanel renders unknown graph source state without mock badge', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, { docId: 'test_evidence_unknown_source' })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'future_graph_source',
+        nodes: [
+          {
+            id: 'node:a',
+            display_name: 'Node A',
+            primary_type: 'PERSON',
+            salience_score: 0.8,
+          },
+          {
+            id: 'node:b',
+            display_name: 'Node B',
+            primary_type: 'EVENT',
+            salience_score: 0.6,
+          },
+        ],
+        edges: [
+          {
+            id: 'edge:a-b',
+            source: 'node:a',
+            target: 'node:b',
+            type: 'SUPPORTED_BY',
+            key_props: {},
+            provenance: {},
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/evidence`)
+
+  await expect(page.getByRole('heading', { name: 'Evidence graph' })).toBeVisible({
+    timeout: 10000,
+  })
+  await expect(page.getByText('unknown source state')).toBeVisible()
+  await expect(page.locator('[title="unknown source state"]')).toBeVisible()
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 })
 
 const STATIC_LAWYER_URL = `${testBaseURL}/static/lawyer.html`

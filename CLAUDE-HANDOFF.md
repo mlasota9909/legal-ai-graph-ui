@@ -2,7 +2,7 @@
 
 ## Date
 
-2026-06-29
+2026-06-30
 
 ## Scope
 
@@ -12,8 +12,9 @@ UI chat action batches for review items U1, U2, U4, and U3 source honesty:
 - U4: add doc-scoped stale response guards for activity, summary, and pipeline state in `useWorkspace`.
 - U3: fix Atrium list source derivation, add Lattice KPI/agreement field source metadata, make DocumentPicker fallback counts non-real/unavailable when `/api/status` lacks `graph_counts`, and stop augmentation provider rows from falling back to seed counts when source keys are omitted.
 - U5: mark legacy static lawyer trace/upload seams unavailable instead of calling `/trace` or `/api/upload`.
+- U7/MAC-49: harden EvidencePanel seed and graph fallback safety without fabricating graph data.
 
-Pre-existing dirty files before edits: untracked `.logs/`, `.opencode-runs/`, `REVIEW-ui.md`.
+Pre-existing dirty files before the MAC-49 continuation: untracked `.vite/` only. It remains untracked and was not committed.
 
 ## Docs read
 
@@ -40,6 +41,9 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - U3 actioned in part: DocumentPicker `/api/status` fallback no longer badges fabricated zero claim counts as real.
 - U3 actioned in part: Atrium and Lattice augmentation provider rows now use only `graph_counts.external_sources_by_source`; omitted keys render as `unavailable` with a mock badge.
 - U5 actioned in part: static lawyer trace debug and upload controls now show unavailable copy and no longer call legacy `/trace` or `/api/upload` endpoints.
+- U7 actioned: EvidencePanel now shows explicit unavailable states for missing namespace, missing seed/provenance, non-OK graph endpoint responses, and empty graph responses.
+- U7 actioned: graph source badges use the shared source taxonomy, so unknown future graph `data_source` values display as `unknown source state`, not mock.
+- U7 actioned: `useWorkspace` clears stale graph namespace on document switches and when status responses do not contain a usable namespace.
 
 ## Files changed
 
@@ -48,6 +52,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - `src/components/atrium/AtriumDashboard.tsx`
 - `src/components/lattice/LatticeDashboard.tsx`
 - `src/components/query/AskPanel.tsx`
+- `src/components/evidence/EvidencePanel.tsx`
 - `static/lawyer-app.jsx`
 - `static/lawyer.html`
 - `src/__tests__/crossscreen.spec.ts`
@@ -78,6 +83,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Created `MAC-38` (`[UI] Review action: make Lattice and pack picker source badges field-accurate`) under `MAC-16`, label `ui`, status `Done`.
 - Created `MAC-39` (`[UI] Review action: stop inventing augmentation provider counts`) under `MAC-16`, label `ui`, status `Done`.
 - Created `MAC-48` (`[UI] Static lawyer app marks legacy trace/upload seams unavailable`) under `MAC-16`, label `ui`, status `Done`.
+- Updated `MAC-49` (`UI EvidencePanel seed and graph fallback safety`), label `ui`, status `Done`.
+- Created successor `MAC-51` (`[UI] Discover live EvidencePanel test document and seed dynamically`), label `ui`, status `Todo`, related to `MAC-49`.
 
 ## Tests run
 
@@ -96,6 +103,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Opencode local worker ran `npx playwright test src/__tests__/crossscreen.spec.ts -g 'atrium augmentation provider rows do not invent omitted source counts' --reporter=line`: pass.
 - `PLAYWRIGHT_PORT=5183 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "static lawyer legacy trace and upload seams are unavailable" --reporter=line`: pass.
 - `PLAYWRIGHT_PORT=5183 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "static lawyer (legacy trace and upload seams are unavailable|app loads matter list|chat handles query_backend_unavailable)" --reporter=line`: pass, 3/3.
+- `PLAYWRIGHT_PORT=5184 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "EvidencePanel graph fallback|unknown graph source" --reporter=line`: pass, 5/5.
+- `PLAYWRIGHT_PORT=5185 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "EvidencePanel|evidence graph|graph fallback|seed" --reporter=line`: 5 mocked MAC-49 tests passed; one live-backend EvidencePanel test failed because Vite proxy could not connect to Core on `127.0.0.1:8090`.
 - `rg -n "/api/upload|/api/docs/.*/trace|/trace" static`: no matches.
 - `git diff --check`: pass.
 
@@ -113,6 +122,11 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Atrium and Lattice augmentation provider rows show real counts only for keys present in `external_sources_by_source`; omitted providers show `unavailable` and a mock badge.
 - Static lawyer trace debug shows `Trace debugging is unavailable in static mode.` and does not fetch legacy trace JSON.
 - Static lawyer upload shows `Document upload unavailable` / `Upload is unavailable in this static lawyer build...` and no longer exposes a file picker or `/api/upload` call.
+- EvidencePanel missing namespace shows `Evidence graph unavailable` / `No graph namespace is available for this document.`
+- EvidencePanel missing seed shows `Evidence graph unavailable` / `No graph seed could be resolved for this item.`
+- EvidencePanel graph 404/non-OK shows `Evidence graph unavailable` / `The evidence graph endpoint did not return usable graph data.`
+- EvidencePanel empty graph shows `Evidence graph unavailable` / `The evidence graph endpoint returned no graph nodes for this item.`
+- EvidencePanel real graph success path remains backed by `/api/graph`; unknown graph source states render as `unknown source state`, not mock.
 
 ## Remaining risks
 
@@ -120,11 +134,13 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Historical review text still mentions `source_uri`; source grep is clean.
 - Register/status fetches already had cancellation guards before this run; this batch did not broaden stale-response testing to every possible status/register path.
 - If Core wants omitted augmentation providers shown as real zero, it should return explicit zero keys in `external_sources_by_source`.
+- Live EvidencePanel tests still require Core to be listening on `localhost:8090`; MAC-49 mocked fallback coverage is backend-independent and green.
+- Existing live EvidencePanel tests still assume the default real document path. `MAC-51` tracks making that discovery dynamic.
 
 ## Architect decisions needed
 
 - Public query scope is currently `document_id` for normal lawyer Ask. Revisit only if Architect/Core move the public scope to `pack_id` or another matter-level identifier.
-- Decide whether `SourceDot` should gain an explicit unavailable/contract-error state rather than mapping unknown API `data_source` values to `mock`.
+- No new Architect decision was needed for MAC-49. Source taxonomy work already introduced explicit unavailable/unknown states.
 
 ## Backend/Core follow-up needed
 
@@ -133,9 +149,9 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 
 ## Deferred review items
 
-- U7 EvidencePanel seed/fallback safety.
 - Static synthesis remains mock-only but honestly badged; broader static artifact parity is still roadmap.
+- Live EvidencePanel test discovery hardening is deferred to `MAC-51`.
 
 ## Exact next recommended task
 
-Move to U7 EvidencePanel seed/fallback safety: ensure absent seed chunks/nodes render an explicit unavailable state without inventing graph relationships.
+Move to `MAC-51`: make live EvidencePanel Playwright setup discover a valid document, namespace, and seed dynamically from the live API instead of relying on the default hardcoded real document path.
