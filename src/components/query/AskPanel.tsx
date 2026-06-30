@@ -12,7 +12,7 @@ interface AskPanelProps {
   onGoEvidence?: (nodeId: string) => void
 }
 
-type ValidationStatus = 'supported' | 'partial' | 'unsupported'
+type ValidationStatus = 'supported' | 'partial' | 'unsupported' | 'empty'
 
 const QUERY_BACKEND_UNAVAILABLE_COPY =
   'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
@@ -23,6 +23,7 @@ function parseDataSource(value: string | undefined | null, answerBasis?: string 
 }
 
 function parseValidationStatus(value: string | undefined): ValidationStatus {
+  if (value === 'empty') return 'empty'
   if (value === 'partial' || value === 'unsupported') return value
   return 'supported'
 }
@@ -112,6 +113,11 @@ const VALIDATION_STYLES: Record<
     label: 'Unsupported',
     text: 'text-red-700',
   },
+  empty: {
+    dot: 'bg-zinc-400',
+    label: 'No answer',
+    text: 'text-[var(--ink-3)]',
+  },
 }
 
 export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelProps) {
@@ -181,6 +187,7 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
   const validationStyle = VALIDATION_STYLES[validation]
   const answerBlocks = response ? matchCitationsToSentences(splitSentences(response.answer), response.citations) : []
   const firstCitationNodeId = response?.citations.find((c) => c.node_id)?.node_id ?? null
+  const hasAnswerContent = answerBlocks.some((block) => block.sentence || block.citations.length > 0)
 
   return (
     <div className="theme-atrium flex min-h-screen flex-col bg-[var(--bg)] text-[var(--ink)]">
@@ -270,6 +277,11 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
             )}
 
             <div className="space-y-5">
+              {!hasAnswerContent && (
+                <p className="rounded-lg border border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-3 text-[13px] text-[var(--ink-2)]">
+                  No answer could be produced from the retrieved evidence for this question.
+                </p>
+              )}
               {answerBlocks.map((block, index) => (
                 <div key={`${block.sentence}-${index}`}>
                   {block.sentence && (

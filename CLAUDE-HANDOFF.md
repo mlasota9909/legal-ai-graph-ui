@@ -14,8 +14,9 @@ UI chat action batches for review items U1, U2, U4, and U3 source honesty:
 - U5: mark legacy static lawyer trace/upload seams unavailable instead of calling `/trace` or `/api/upload`.
 - U7/MAC-49: harden EvidencePanel seed and graph fallback safety without fabricating graph data.
 - MAC-51: make live EvidencePanel Playwright tests discover document, namespace, and graph seed dynamically.
+- MAC-52: classify and harden the live AskPanel query timeout path, including Core typed degraded responses and completed empty real responses.
 
-Pre-existing dirty files before the MAC-51 continuation: untracked `.vite/` only. It remains untracked and was not committed.
+Pre-existing dirty files before the MAC-52 continuation: untracked `.vite/` only. It remains untracked and was not committed.
 
 ## Docs read
 
@@ -47,6 +48,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - U7 actioned: `useWorkspace` clears stale graph namespace on document switches and when status responses do not contain a usable namespace.
 - MAC-51 actioned: live EvidencePanel tests now discover candidate documents from `/api/status`, read `graph_namespace` from `/api/status/{docId}`, resolve the UI-equivalent register provenance seed, and preflight `/api/graph` before navigating through the live UI path.
 - MAC-51 actioned: live EvidencePanel tests skip with an explicit backend-unavailable/no-usable-seed reason when the live tier cannot run, while mocked fallback tests remain backend-independent.
+- MAC-52 actioned: live AskPanel tests now discover a live query document from Core, assert request dispatch separately from response arrival, and fail with a backend-latency classification if `/api/query` does not respond within the live-query threshold.
+- MAC-52 actioned: AskPanel now treats Core `validation_status="empty"` as an explicit `No answer` state instead of a supported answer, without fabricating answer text or citations.
 
 ## Files changed
 
@@ -89,7 +92,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Updated `MAC-49` (`UI EvidencePanel seed and graph fallback safety`), label `ui`, status `Done`.
 - Created successor `MAC-51` (`[UI] Discover live EvidencePanel test document and seed dynamically`), label `ui`, status `Todo`, related to `MAC-49`.
 - Updated `MAC-51` (`[UI] Discover live EvidencePanel test document and seed dynamically`), label `ui`, status `Done`.
-- Created `MAC-52` (`[UI] Classify and harden live AskPanel query Playwright timeout`), label `ui`, status `Todo`, related to `MAC-51`, `MAC-44`, and `MAC-42`.
+- Updated `MAC-52` (`[UI] Classify and harden live AskPanel query Playwright timeout`), label `ui`, status `Done`.
 
 ## Tests run
 
@@ -117,6 +120,14 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - `PLAYWRIGHT_PORT=5190 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --reporter=line`: 35 passed, 1 failed. Failure was unrelated `AskPanel returns an answer with citations` timing out waiting for `/api/query` after entering `Thinking...`; Core `/health` and `/api/status` remained responsive.
 - `rg -n "/api/upload|/api/docs/.*/trace|/trace" static`: no matches.
 - `git diff --check`: pass.
+- MAC-52 direct `/api/query` probe against `original_royalcomm` generic subject question: HTTP 200 in 35.513501s, `data_source="real"`, `answer_basis="retrieved_evidence"`, `validation_status="empty"`, empty answer/citations.
+- MAC-52 direct `/api/query` probe against DRFA question: HTTP 200 in 59.102737s, `data_source="real"`, `answer_basis="retrieved_evidence"`, `validation_status="empty"`, empty answer/citations.
+- `npx tsc --noEmit`: pass after MAC-52.
+- `npm run build`: pass after MAC-52.
+- `rg -n "source_uri" src static`: no matches after MAC-52.
+- `npx playwright test src/__tests__/crossscreen.spec.ts --grep "query_backend_unavailable|degraded query|empty real query|unknown source" --reporter=line`: pass, 4/4.
+- `PLAYWRIGHT_PORT=5191 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "AskPanel.*live|live AskPanel|query timeout" --reporter=line`: pass, 1/1 in 41.3s.
+- `PLAYWRIGHT_PORT=5192 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --reporter=line`: pass, 37/37 in 2.8m.
 
 ## Results
 
@@ -138,15 +149,18 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - EvidencePanel empty graph shows `Evidence graph unavailable` / `The evidence graph endpoint returned no graph nodes for this item.`
 - EvidencePanel real graph success path remains backed by `/api/graph`; unknown graph source states render as `unknown source state`, not mock.
 - Live EvidencePanel tests no longer require the hardcoded default real document. They dynamically discover the document, namespace, register seed, and usable graph before exercising the UI.
+- Live AskPanel query test no longer depends on the first `/api/status` document from the UI route. It discovers a Core document directly, verifies the UI sends `document_id`, and distinguishes request-dispatch failures from backend response latency/hangs.
+- AskPanel typed `503 detail.code="query_backend_unavailable"` remains rendered as degraded/unavailable, never mock.
+- AskPanel completed empty real query responses render `No answer` and `No answer could be produced from the retrieved evidence for this question.` instead of a misleading `Supported` badge.
 
 ## Remaining risks
 
-- Full crossscreen verification depends on a long-lived backend API process on `localhost:8090`; the backend daemon exited twice during long runs with Ray GCS failure.
+- Full crossscreen verification depends on a long-lived backend API process on `localhost:8090`; the MAC-52 full run passed while Core stayed up.
 - Historical review text still mentions `source_uri`; source grep is clean.
 - Register/status fetches already had cancellation guards before this run; this batch did not broaden stale-response testing to every possible status/register path.
 - If Core wants omitted augmentation providers shown as real zero, it should return explicit zero keys in `external_sources_by_source`.
-- Live EvidencePanel tests still require Core to be listening on `localhost:8090`; MAC-49 mocked fallback coverage is backend-independent and green.
-- Full crossscreen is still not green end-to-end: `MAC-52` tracks the unrelated live AskPanel query timeout observed after MAC-51 passed.
+- Live EvidencePanel and live AskPanel tests still require Core to be listening on `localhost:8090`; mocked fallback/degraded coverage is backend-independent and green.
+- Core subprocess/model query latency is currently tens of seconds for live query probes; UI tests allow a targeted 180s response threshold and classify timeouts as backend latency/hang.
 
 ## Architect decisions needed
 
@@ -161,8 +175,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 ## Deferred review items
 
 - Static synthesis remains mock-only but honestly badged; broader static artifact parity is still roadmap.
-- Live AskPanel query timeout classification is deferred to `MAC-52`.
+- No deferred MAC-52 UI item remains.
 
 ## Exact next recommended task
 
-Move to `MAC-52`: classify and harden the live AskPanel query Playwright timeout without weakening real query coverage or typed degraded-query handling.
+Keep PR #1 open for review/checkpoint use. Next UI work should come from the next Linear `ui` issue under `MAC-16` or from PR review feedback.

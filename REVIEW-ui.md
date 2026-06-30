@@ -78,6 +78,16 @@
 - **Files changed:** `src/__tests__/crossscreen.spec.ts`, `CLAUDE-HANDOFF.md`, `REVIEW-ui.md`, `CLAUDE.md`.
 - **Linear:** `MAC-51` labelled `ui`, status `Done`; `MAC-52` created for the unrelated live AskPanel query timeout.
 
+### 2026-06-30 — UI Codex MAC-52 live AskPanel query timeout
+
+- **Live query timeout classification actioned:** live AskPanel Playwright now discovers a Core document directly, asserts the UI dispatches `/api/query`, and reports a clear backend-latency/hang error if a dispatched request does not receive a response within the targeted live-query threshold.
+- **Typed degraded path preserved:** HTTP 503 `detail.code="query_backend_unavailable"` must render the degraded/unavailable copy and must not show a mock badge or fabricated answer.
+- **Completed empty real response actioned:** Core live probes returned HTTP 200 `data_source="real"` / `answer_basis="retrieved_evidence"` with `validation_status="empty"` and no answer/citations. AskPanel now renders `No answer` plus explicit no-answer copy instead of a misleading `Supported` badge.
+- **Tests run:** `npx tsc --noEmit` passed; `npm run build` passed; `rg -n "source_uri" src static` returned no matches; focused query/degraded/empty-source Playwright grep passed 4/4; live AskPanel grep passed 1/1 in 41.3s; full crossscreen with Core running passed 37/37.
+- **Files changed:** `src/components/query/AskPanel.tsx`, `src/__tests__/crossscreen.spec.ts`, `CLAUDE-HANDOFF.md`, `REVIEW-ui.md`.
+- **Linear:** `MAC-52` labelled `ui`, status `Done`.
+- **Deferred:** no MAC-52 UI item remains. Core query latency is still tens of seconds in local subprocess mode, but UI now handles and classifies the live path honestly.
+
 ## 1. Executive summary
 
 - Overall UI alignment with VISION.md: The SPA mostly behaves as a projection surface over backend APIs, with real register rows, summary panels, evidence graph navigation, source badges, and post-run review concepts. The main gaps are source-badge honesty and contract drift.

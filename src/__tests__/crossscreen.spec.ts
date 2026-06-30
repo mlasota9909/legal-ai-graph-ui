@@ -1,16 +1,23 @@
-// Cross-screen reconciliation tests — 36 tests
+// Cross-screen reconciliation tests — 37 tests
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
 const testPort = process.env.PLAYWRIGHT_PORT ?? '5173'
 const testBaseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${testPort}`
+const coreApiBaseURL = (
+  process.env.LEGAL_AI_API_BASE_URL ?? process.env.CORE_API_BASE_URL ?? 'http://localhost:8090'
+).replace(/\/$/, '')
 
 const REAL_DOC_IDS = ['romancath', 'original_royalcomm', 'volume_10', 'tanyaday', 'hopper']
 const DEFAULT_REAL_DOC_ID = 'original_royalcomm'
 const MOCK_DOC_ID = 'doc_2026_05_royalcomm'
 const MOCK_TITLE = 'Royal Commission — Automated Debt Recovery, Volume 1'
 const MOCK_PAGE_COUNT = '4,812'
+const QUERY_BACKEND_UNAVAILABLE_COPY =
+  'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+const LIVE_QUERY_REQUEST_TIMEOUT_MS = 30000
+const LIVE_QUERY_RESPONSE_TIMEOUT_MS = 180000
 
 type LiveSummaryProbe = {
   docId: string
@@ -30,6 +37,10 @@ type LiveEvidenceDiscovery =
   | { seed: LiveEvidenceSeed; skipReason?: never }
   | { seed: null; skipReason: string }
 
+type LiveQueryDiscovery =
+  | { docId: string; skipReason?: never }
+  | { docId: null; skipReason: string }
+
 const LIVE_EVIDENCE_REGISTER_TYPES = ['authority', 'events', 'people'] as const
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,7 +53,8 @@ function asString(value: unknown): string | null {
 
 async function getJson(request: APIRequestContext, url: string): Promise<unknown | null> {
   try {
-    const response = await request.get(url, { timeout: 10000 })
+    const targetUrl = url.startsWith('/api/') ? `${coreApiBaseURL}${url}` : url
+    const response = await request.get(targetUrl, { timeout: 10000 })
     if (!response.ok()) return null
     return await response.json()
   } catch {
@@ -134,6 +146,45 @@ async function requireLiveEvidenceSeed(request: APIRequestContext): Promise<Live
   test.skip(discovery.seed === null, discovery.skipReason)
   if (!discovery.seed) throw new Error(discovery.skipReason)
   return discovery.seed
+}
+
+async function discoverLiveQueryDocument(request: APIRequestContext): Promise<LiveQueryDiscovery> {
+  const statusList = await getJson(request, '/api/status?limit=50')
+  if (!isRecord(statusList) || !Array.isArray(statusList.documents)) {
+    return {
+      docId: null,
+      skipReason: 'Core backend unavailable or /api/status returned no document list for AskPanel live query.',
+    }
+  }
+
+  const docIds = statusList.documents
+    .filter(isRecord)
+    .map((doc) => ({
+      docId: asString(doc.document_id),
+      dataSource: asString(doc.data_source),
+    }))
+    .filter((doc): doc is { docId: string; dataSource: string | null } => {
+      return doc.docId !== null && doc.docId !== MOCK_DOC_ID
+    })
+    .sort((a, b) => Number(b.dataSource === 'real') - Number(a.dataSource === 'real'))
+    .map((doc) => doc.docId)
+
+  for (const docId of docIds) {
+    const status = await getJson(request, `/api/status/${encodeURIComponent(docId)}`)
+    if (isRecord(status)) return { docId }
+  }
+
+  return {
+    docId: null,
+    skipReason: 'Core backend is live, but no status document could be verified for AskPanel live query.',
+  }
+}
+
+async function requireLiveQueryDocument(request: APIRequestContext): Promise<string> {
+  const discovery = await discoverLiveQueryDocument(request)
+  test.skip(discovery.docId === null, discovery.skipReason)
+  if (!discovery.docId) throw new Error(discovery.skipReason)
+  return discovery.docId
 }
 
 async function findLiveSummary(request: APIRequestContext): Promise<LiveSummaryProbe | null> {
@@ -1138,7 +1189,7 @@ test('static lawyer chat handles query_backend_unavailable degraded query respon
 
   await expect(
     page.getByText(
-      'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+      QUERY_BACKEND_UNAVAILABLE_COPY
     )
   ).toBeVisible({ timeout: 10000 })
   await expect(page.getByText('No answer found in the available artifact claims.')).toHaveCount(0)
@@ -1160,59 +1211,101 @@ test('login page renders with email and password fields', async ({ page }) => {
   await expect(submitButton).toBeVisible({ timeout: 3000 })
 })
 
-test('AskPanel returns an answer with citations', async ({ page }) => {
-  test.setTimeout(120000)
+test('live AskPanel query returns real answer or typed degraded state', async ({ page, request }) => {
+  test.setTimeout(LIVE_QUERY_RESPONSE_TIMEOUT_MS + 60000)
 
-  const statusResponse = page.waitForResponse(async (response) => {
-    if (!response.ok()) return false
-    const url = response.url()
-    if (!url.includes('/api/status') || /\/api\/status\/.+/.test(url)) return false
-    return true
-  }, { timeout: 15000 })
-
-  await page.goto('/')
-  await page.evaluate(() =>
-    fetch('/api/status', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('legal_ai_token') ?? ''}` },
-    }),
-  )
-
-  const response = await statusResponse
-  const payload = (await response.json()) as { documents?: { document_id: string }[] }
-  const docId = payload.documents?.[0]?.document_id
-  expect(docId).toBeTruthy()
-
+  const docId = await requireLiveQueryDocument(request)
   await page.goto(`/runs/${docId}/ask`)
 
   const textarea = page.locator('textarea')
   await textarea.waitFor({ timeout: 10000 })
+  const question = 'What is the main subject of this document?'
+  await textarea.fill(question)
 
-  await textarea.fill('What is the main subject of this document?')
-
-  // The submit button is disabled until the namespace loads from /api/status/{docId}.
-  // Wait for it to become enabled — this is the reliable signal that the namespace is ready.
-  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  const submitButton = page.locator('main button').filter({ hasText: 'Ask' }).first()
   await expect(submitButton).toBeEnabled({ timeout: 10000 })
 
-  // Set up query response capture BEFORE clicking to avoid race condition
+  const queryRequestPromise = page.waitForRequest(
+    (req) => req.url().includes('/api/query'),
+    { timeout: LIVE_QUERY_REQUEST_TIMEOUT_MS }
+  )
   const queryResponsePromise = page.waitForResponse(
     (resp) => resp.url().includes('/api/query'),
-    { timeout: 90000 },
+    { timeout: LIVE_QUERY_RESPONSE_TIMEOUT_MS }
   )
 
+  const queryStartedAt = Date.now()
   await submitButton.click()
 
-  const queryResp = await queryResponsePromise
-  expect(queryResp.ok()).toBeTruthy()
-  const queryData = (await queryResp.json()) as { data_source?: string; answer_basis?: string | null }
-  expect(queryData.data_source).toBe('real')
-  expect(['retrieved_evidence', undefined, null]).toContain(queryData.answer_basis)
+  let queryRequest
+  try {
+    queryRequest = await queryRequestPromise
+  } catch {
+    throw new Error(
+      `AskPanel did not dispatch /api/query within ${LIVE_QUERY_REQUEST_TIMEOUT_MS}ms for document ${docId}.`
+    )
+  }
 
-  // Answer renders as <p class="font-serif …"> inside <main> → <section> → answer blocks
+  const queryBody = queryRequest.postDataJSON() as Record<string, unknown>
+  expect(queryBody.question).toBe(question)
+  expect(queryBody.document_id).toBe(docId)
+  expect(queryBody.namespace).toBeUndefined()
+  test.info().annotations.push({ type: 'live-query-document', description: docId })
+
+  let queryResp
+  try {
+    queryResp = await queryResponsePromise
+  } catch {
+    const elapsedMs = Date.now() - queryStartedAt
+    throw new Error(
+      `Live /api/query request was dispatched for document ${docId}, but no response arrived within ` +
+        `${LIVE_QUERY_RESPONSE_TIMEOUT_MS}ms (${elapsedMs}ms elapsed). ` +
+        'Classify as backend query latency/hang, not UI dispatch failure.'
+    )
+  }
+
+  const latencyMs = Date.now() - queryStartedAt
+  test.info().annotations.push({ type: 'live-query-latency-ms', description: String(latencyMs) })
+  const payload = await queryResp.json().catch(() => null)
+
+  if (queryResp.status() === 503) {
+    expect(isRecord(payload) && isRecord(payload.detail) ? payload.detail.code : null).toBe(
+      'query_backend_unavailable'
+    )
+    await expect(
+      page.getByText(QUERY_BACKEND_UNAVAILABLE_COPY)
+    ).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+    await expect(page.locator('main section')).toHaveCount(0)
+    return
+  }
+
+  if (!queryResp.ok()) {
+    throw new Error(`Live /api/query returned unexpected HTTP ${queryResp.status()} for document ${docId}.`)
+  }
+  if (!isRecord(payload)) {
+    throw new Error(`Live /api/query returned a non-object payload for document ${docId}.`)
+  }
+
+  expect(payload.data_source).toBe('real')
+  expect(['retrieved_evidence', undefined, null]).toContain(payload.answer_basis)
+  const citationCount = Array.isArray(payload.citations) ? payload.citations.length : 0
+
+  if (payload.validation_status === 'empty' && payload.answer === '' && citationCount === 0) {
+    await expect(page.getByText('No answer', { exact: true })).toBeVisible({ timeout: 10000 })
+    await expect(
+      page.getByText('No answer could be produced from the retrieved evidence for this question.')
+    ).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+    return
+  }
+
+  expect(typeof payload.answer === 'string' && payload.answer.trim().length > 0).toBe(true)
+  expect(citationCount).toBeGreaterThan(0)
+
   const answerEl = page.locator('main section p').first()
   await expect(answerEl).toBeVisible({ timeout: 10000 })
 
-  // Citations render as <button class="… font-mono …"> inside each answer block
   const citationEl = page.locator('main section button.font-mono').first()
   await expect(citationEl).toBeVisible({ timeout: 5000 })
 })
@@ -1403,7 +1496,7 @@ test('AskPanel query request uses document_id and not namespace', async ({ page 
   await textarea.fill(testQuestion)
 
   // Click the Ask button
-  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  const submitButton = page.locator('main button').filter({ hasText: 'Ask' }).first()
   await expect(submitButton).toBeEnabled({ timeout: 5000 })
   await submitButton.click()
 
@@ -1478,13 +1571,82 @@ test('AskPanel renders unknown source state for future data_source values', asyn
   await expect(textarea).toBeVisible({ timeout: 10000 })
   await textarea.fill('What is the source state?')
 
-  const submitButton = page.locator('button').filter({ hasText: 'Ask' }).first()
+  const submitButton = page.locator('main button').filter({ hasText: 'Ask' }).first()
   await expect(submitButton).toBeEnabled({ timeout: 5000 })
   await submitButton.click()
 
   await expect(page.getByText('unknown source state')).toBeVisible({ timeout: 10000 })
   await expect(page.locator('[title="unknown source state"]')).toBeVisible()
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+})
+
+test('AskPanel renders empty real query response without fabricating an answer', async ({ page }) => {
+  const TEST_DOC_ID = 'test_doc_empty_query'
+
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [
+          {
+            document_id: TEST_DOC_ID,
+            label: 'Empty Query Test Document',
+            graph_namespace: null,
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.route(`**/api/status/${TEST_DOC_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: TEST_DOC_ID,
+        label: 'Empty Query Test Document',
+        data_source: 'real',
+        graph_namespace: null,
+      }),
+    })
+  })
+
+  await page.route('**/api/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        answer: '',
+        citations: [],
+        supporting_subgraph: { nodes: [], edges: [] },
+        validation_status: 'empty',
+        confidence: 0,
+        data_source: 'real',
+        answer_basis: 'retrieved_evidence',
+        retrieval_debug: { retrieved: 20, used: 0, sources: ['graph', 'page'] },
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${TEST_DOC_ID}/ask`)
+
+  const textarea = page.locator('textarea').first()
+  await expect(textarea).toBeVisible({ timeout: 10000 })
+  await textarea.fill('What does the retrieved evidence support?')
+
+  const submitButton = page.locator('main button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 5000 })
+  await submitButton.click()
+
+  await expect(page.getByText('No answer', { exact: true })).toBeVisible({ timeout: 10000 })
+  await expect(
+    page.getByText('No answer could be produced from the retrieved evidence for this question.')
+  ).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('[title="real data"]')).toBeVisible()
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+  await expect(page.locator('main section p.font-serif')).toHaveCount(0)
 })
 
 test('AskPanel handles query_backend_unavailable degraded query response', async ({ page }) => {
@@ -1545,7 +1707,7 @@ test('AskPanel handles query_backend_unavailable degraded query response', async
 
   await expect(
     page.getByText(
-      'Query backend unavailable. The AI query service is temporarily unavailable; evidence graph, registers, and summaries remain available.'
+      QUERY_BACKEND_UNAVAILABLE_COPY
     )
   ).toBeVisible({ timeout: 10000 })
   await expect(page.locator('[class*="bg-amber-50"]')).toBeVisible({ timeout: 5000 })
