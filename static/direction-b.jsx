@@ -104,12 +104,19 @@ const lStyle = `
   .l-pipe .pbar i{display:block;height:100%;background:${L.accent}}
   .l-pipe .pbar.done i{background:${L.good}}
   .l-pipe .pbar.queued i{background:${L.ink4}}
+  .l-pipe .pbar.unavailable i{background:${L.ink4}}
   .l-pipe .ppct{font-family:${L.mono};color:${L.ink};font-weight:500;width:86px;text-align:right;white-space:nowrap}
+  .l-pipe .paction{width:96px;text-align:right}
+  .l-pipe .plink{border:1px solid ${L.rule};background:${L.panel};color:${L.accent};border-radius:4px;
+    padding:4px 7px;font-family:${L.mono};font-size:10px;cursor:pointer}
+  .l-pipe .plink:hover{background:${L.accentSoft}}
+  .l-pipe .pna{font-family:${L.mono};font-size:10px;color:${L.ink3}}
   .l-pipe .st{font-family:${L.mono};font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
     padding:1.5px 6px;border-radius:3px;white-space:nowrap}
   .l-pipe .st.running{background:${L.accentSoft};color:${L.accent}}
   .l-pipe .st.done{background:${L.goodSoft};color:${L.good}}
   .l-pipe .st.queued{background:${L.ruleSoft};color:${L.ink3}}
+  .l-pipe .st.unavailable{background:${L.ruleSoft};color:${L.ink3}}
 
   /* ── Agreement strip ──────────────────────────────────────── */
   .l-agree-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
@@ -340,8 +347,52 @@ function lNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function lHasNumber(value) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
+function lFormatLocalDateTime(value) {
+  if (!value) return '—';
+  try {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    return date.toLocaleString(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    }).replace(',', '');
+  } catch { return String(value); }
+}
+
+function lFormatLocalTime(value, seconds = false) {
+  if (!value) return '—';
+  try {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    return date.toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: seconds ? '2-digit' : undefined,
+      timeZoneName: 'short',
+    });
+  } catch { return String(value); }
+}
+
+function lIsoTitle(value) {
+  if (!value) return '';
+  try {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : String(value);
+  } catch { return String(value); }
+}
+
 function lStatusLabel(status) {
-  return status === 'queued' ? 'Not started' : status;
+  if (status === 'queued') return 'Not started';
+  if (status === 'unavailable') return 'Unavailable';
+  return status || 'unknown';
 }
 
 function lPaneId(view, docId) {
@@ -394,10 +445,39 @@ function lEnhancePipelineWithRawStatus(pipeline, rawStatus) {
   });
 }
 
-function LPipeRow({ p, idx }) {
+function lPipelineTarget(stage) {
+  if (stage && stage.target) return stage.target;
+  const id = String(stage?.id || '').toLowerCase();
+  if (['chronology', 'people', 'entities', 'exec', 'detailed', 'synthesis'].includes(id)) return id;
+  return null;
+}
+
+function lStageKpi(stage) {
+  if (!stage || stage.status === 'unavailable') return { value: '—', delta: 'pending telemetry', tone: '' };
+  const label = stage.progressLabel || '';
+  const match = label.match(/^\s*(\d+\s*\/\s*\d+)/);
+  if (match) return { value: match[1].replace(/\s/g, ''), delta: stage.detail || lStatusLabel(stage.status), tone: stage.status === 'done' ? 'ok' : '' };
+  const rawPct = stage.pct != null ? stage.pct : (stage.progress != null ? stage.progress * 100 : null);
+  if (lHasNumber(rawPct)) return { value: Math.max(0, Math.min(100, Number(rawPct))).toFixed(0) + '%', delta: lStatusLabel(stage.status), tone: stage.status === 'done' ? 'ok' : '' };
+  return { value: '—', delta: 'pending telemetry', tone: '' };
+}
+
+function lHostOnline(host) {
+  if (!host) return null;
+  if (host.ok === true || host.available === true) return true;
+  if (host.ok === false || host.available === false) return false;
+  const status = String(host.status || host.state || '').toLowerCase();
+  if (/^(ok|up|online|healthy|ready|running|available)$/.test(status)) return true;
+  if (/(down|offline|unreachable|failed|error|unavailable|degraded)/.test(status)) return false;
+  return null;
+}
+
+function LPipeRow({ p, idx, onView, docId }) {
   const rawPct = p.pct != null ? p.pct : (p.progress != null ? p.progress * 100 : 0);
   const pct = Math.max(0, Math.min(100, lNumber(rawPct)));
   const progressLabel = p.progressLabel || (pct.toFixed(0) + '%');
+  const target = lPipelineTarget(p);
+  const canView = !!(target && onView);
   return (
     <tr>
       <td className="pid">P{idx + 1}</td>
@@ -410,6 +490,11 @@ function LPipeRow({ p, idx }) {
         <div className={"pbar " + p.status}><i style={{ width: pct.toFixed(1)+'%' }} /></div>
       </td>
       <td className="ppct">{progressLabel}</td>
+      <td className="paction">
+        {canView
+          ? <button className="plink" onClick={() => onView({ view: target, docId })}>Open</button>
+          : <span className="pna">No detail</span>}
+      </td>
     </tr>
   );
 }
@@ -455,13 +540,17 @@ function ActivityLog({ onView, activity, docId, debugIds }) {
     ENTITY: L.warn, PEOPLE: L.laneB, SWEEP: L.warnMid, SYSTEM: L.ink3,
     SYNTHESIS: L.warn, PIPELINE: L.accent,
   };
-  const mapped = events.map(a => ({
-    t: a.ts || a.t || '',
+  const mapped = events.map(a => {
+    const rawT = a.ts || a.t || '';
+    return {
+    rawT,
+    t: lFormatLocalDateTime(rawT),
     src: a.source || typeToSrc[a.type] || (a.type || '').toLowerCase(),
     type: a.type || 'CLAIM',
     msg: a.msg || '',
     docTitle: null,
-  }));
+  };
+  });
 
   // Historical = doc-scoped persisted JSONL events from coordination.
   const [histTab, setHistTab] = React.useState('live');
@@ -475,13 +564,14 @@ function ActivityLog({ onView, activity, docId, debugIds }) {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const rows = ((d && d.events) || []).map(a => ({
-          t: a.ts || a.t || '',
+          rawT: a.ts || a.t || '',
+          t: lFormatLocalDateTime(a.ts || a.t || ''),
           src: a.source || typeToSrc[a.type] || (a.type || '').toLowerCase(),
           type: a.type || 'CLAIM',
           msg: a.msg || '',
           docTitle: null,
         }));
-        rows.sort((a, b) => b.t.localeCompare(a.t));
+        rows.sort((a, b) => (b.rawT || '').localeCompare(a.rawT || ''));
         setHistEvents(rows);
       })
       .catch(() => setHistEvents([]));
@@ -576,7 +666,12 @@ function ActivityLog({ onView, activity, docId, debugIds }) {
                    background:'transparent'}}
                  onMouseEnter={e => { if(canNav) e.currentTarget.style.background = L.ruleSoft; }}
                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              <div style={{fontFamily:L.mono,fontSize:10.5,color:L.ink3,paddingTop:1}}>{a.t}</div>
+              <div
+                title={lIsoTitle(a.rawT)}
+                style={{fontFamily:L.mono,fontSize:10.5,color:L.ink3,paddingTop:1}}
+              >
+                {a.t}
+              </div>
               <div style={{fontFamily:L.mono,fontSize:10,color:L.ink2,paddingTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.src}</div>
               <div>
                 <span style={{
@@ -720,11 +815,7 @@ function ArtReportCard({ a, onView, docId, debugIds, artifactRef, runId }) {
 function PeopleRunHistoryCard({ runs, selectedIdx, onSelect }) {
   if (!runs || runs.length === 0) return null;
   const run = runs[selectedIdx] || runs[0];
-  const fmt = ts => {
-    if (!ts) return '—';
-    try { return new Date(ts).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-    catch (e) { return ts; }
-  };
+  const fmt = ts => lFormatLocalDateTime(ts);
   return (
     <div className="l-card">
       <div className="l-card-h" style={{ alignItems: 'center', gap: 10 }}>
@@ -828,18 +919,7 @@ function ArtFoot({ lastUpdate, viewLabel, onView, target, href }) {
 }
 
 function lFormatIngestDateTime(value) {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString("en-AU", {
-      timeZone: "Australia/Melbourne",
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).replace(",", "") + " AEST";
-  } catch { return String(value); }
+  return lFormatLocalDateTime(value);
 }
 
 // ─── Conflict 3-lane ─────────────────────────────────────────────────────
@@ -904,7 +984,7 @@ function LlmTelemetryPanel({ metrics, telemetry }) {
 
   const fmtTime = (iso) => {
     if (!iso) return '—';
-    try { return new Date(iso).toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', second: '2-digit'}); } catch { return iso.slice(11,19); }
+    return lFormatLocalTime(iso, true);
   };
 
   return (
@@ -912,7 +992,7 @@ function LlmTelemetryPanel({ metrics, telemetry }) {
       <div className="l-card-h">
         <h3>LLM request telemetry</h3>
         <div className="meta">
-          {fast ? (fast.ok ? 'alienware · online' : 'alienware · offline') : 'loading…'}
+          {fast ? (fast.ok ? 'alienware · online' : 'alienware · offline') : 'loading...'}
           {' · '}
           {deep ? (deep.ok ? 'gb10 · online' : 'gb10 · no metrics') : ''}
         </div>
@@ -1072,7 +1152,7 @@ function HardwareThroughputCard() {
           {row('Alienware', data.alienware)}
           {row('GymPC', data.gympc)}
           <div style={{ fontSize:11, color:'#9CA3AF', marginTop:6 }}>
-            Updated {data.timestamp ? new Date(data.timestamp).toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '-'}
+            Updated {data.timestamp ? lFormatLocalTime(data.timestamp) : '-'}
           </div>
         </div>
       )}
@@ -1229,7 +1309,8 @@ function LatticeDashboard() {
       Object.entries(live.hardware).forEach(([key, host]) => {
         const before = prev.hardware[key];
         if (!before) return;
-        const delta = Number(host.generation_tokens_total || 0) - Number(before.generation_tokens_total || 0);
+        if (!lHasNumber(host.generation_tokens_total) || !lHasNumber(before.generation_tokens_total)) return;
+        const delta = Number(host.generation_tokens_total) - Number(before.generation_tokens_total);
         if (delta >= 0) rates[key] = delta / elapsed;
       });
       setTokenRates(rates);
@@ -1247,13 +1328,20 @@ function LatticeDashboard() {
   const allDocs    = live?.all_docs || [];
 
   const hardwareEntries = Object.entries(hw);
-  const aw = hw.alienware || {};
-  const fleetKv = hardwareEntries.length
-    ? Math.max(...hardwareEntries.map(([, h]) => Number(h.kv_cache_pct || 0)))
-    : 0;
-  const fleetRunning = hardwareEntries.reduce((s, [, h]) => s + Number(h.running || 0), 0);
-  const fleetWaiting = hardwareEntries.reduce((s, [, h]) => s + Number(h.waiting || 0), 0);
-  const fleetGenTotal = hardwareEntries.reduce((s, [, h]) => s + Number(h.generation_tokens_total || 0), 0);
+  const kvValues = hardwareEntries.map(([, h]) => h.kv_cache_pct).filter(lHasNumber).map(Number);
+  const runningValues = hardwareEntries.map(([, h]) => h.running).filter(lHasNumber).map(Number);
+  const waitingValues = hardwareEntries.map(([, h]) => h.waiting).filter(lHasNumber).map(Number);
+  const tokenValues = hardwareEntries
+    .filter(([, h]) => lHostOnline(h) === true && lHasNumber(h.generation_tokens_total))
+    .map(([, h]) => Number(h.generation_tokens_total));
+  const fleetKvKnown = kvValues.length > 0;
+  const fleetKv = fleetKvKnown ? Math.max(...kvValues) : null;
+  const fleetRunningKnown = runningValues.length > 0;
+  const fleetWaitingKnown = waitingValues.length > 0;
+  const fleetRunning = runningValues.reduce((s, v) => s + v, 0);
+  const fleetWaiting = waitingValues.reduce((s, v) => s + v, 0);
+  const fleetGenKnown = tokenValues.length > 0;
+  const fleetGenTotal = tokenValues.reduce((s, v) => s + v, 0);
 
   // Agreement data from breakdown
   const makeAgree = (type) => {
@@ -1285,18 +1373,18 @@ function LatticeDashboard() {
   const artChrono = {
     name: 'Chronology', kind: 'list', status: 'iterating',
     count: chronoN, confirmedCount: chronoConfirmedCount, nominatedCount: chronoNominatedCount, accepted: chronoAcc, disputed: chronoDisp, superseded: 0,
-    lastUpdate: fetchTs ? fetchTs.toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—',
+    lastUpdate: fetchTs ? lFormatLocalTime(fetchTs) : '—',
   };
   const artEntity = {
     name: 'Entities', kind: 'list', status: 'iterating',
     count: documentCounts?.entities ?? claimsData.entities ?? rawStatus?.mentioned_entities_count ?? 0,
     entityClaims: documentCounts?.entity_claims?.total ?? 0,
-    lastUpdate: fetchTs ? fetchTs.toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—',
+    lastUpdate: fetchTs ? lFormatLocalTime(fetchTs) : '—',
   };
   const artPeople = {
     name: 'People', kind: 'list', status: 'iterating',
     count: peopleN, accepted: peopleAcc, disputed: peopleDisp, superseded: 0,
-    lastUpdate: fetchTs ? fetchTs.toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—',
+    lastUpdate: fetchTs ? lFormatLocalTime(fetchTs) : '—',
   };
   const synthesisSections = Array.isArray(synthesisArtifact?.sections) ? synthesisArtifact.sections : [];
   const synthesisOutline = synthesisSections.map((section, idx) => ({
@@ -1314,7 +1402,7 @@ function LatticeDashboard() {
     name: 'Legal Memo', kind: 'report', id: 'exec', status: synthesisSectionCount > 0 ? 'drafting' : 'queued',
     sections: synthesisSectionCount, drafted: synthesisSectionCount, critiqued: 0,
     outline: synthesisOutline,
-    lastUpdate: synthesisArtifact?.generated_at ? new Date(synthesisArtifact.generated_at).toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—',
+    lastUpdate: synthesisArtifact?.generated_at ? lFormatLocalTime(synthesisArtifact.generated_at) : '—',
   };
   const artDetailed = {
     name: 'Detailed Analysis', kind: 'report', id: 'detailed', status: 'gated',
@@ -1332,8 +1420,12 @@ function LatticeDashboard() {
     return v.toString();
   };
 
-  const tsStr = fetchTs ? fetchTs.toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : 'loading…';
+  const tsStr = fetchTs ? lFormatLocalTime(fetchTs) : 'loading...';
   const activeDocId = selectedDocId || localStorage.getItem('op_selected_doc') || doc.id || null;
+  const parseStage = pipeline.find(p => p.id === 'parse' || /parse|ocr/i.test(p.name || ''));
+  const indexStage = pipeline.find(p => p.id === 'index' || /chunk|index/i.test(p.name || ''));
+  const parseKpi = lStageKpi(parseStage);
+  const indexKpi = lStageKpi(indexStage);
   const chronologyStage = pipeline.find(p => p.id === 'chronology');
   const peopleStage = pipeline.find(p => p.id === 'people');
   const chronologyRunning = chronologyStage?.status === 'running';
@@ -1430,10 +1522,12 @@ function LatticeDashboard() {
           )}
         </div>
         <LKpi label="Claims" value={totalClaims.toLocaleString()} delta={`${claimsData.chronology||0} chrono · ${claimsData.people||0} people`} />
+        <LKpi label="Parse/OCR" value={parseKpi.value} tone={parseKpi.tone} delta={parseKpi.delta} />
+        <LKpi label="Chunk/Index" value={indexKpi.value} tone={indexKpi.tone} delta={indexKpi.delta} />
         <LKpi label="Entities" value={(claimsData.entities||0).toString()} delta="canonical registry v2" />
         <LKpi label="References" value={((claimsData.internal_refs||0)+(claimsData.external_refs||0)).toString()} delta={`${claimsData.internal_refs||0} int · ${claimsData.external_refs||0} ext`} />
-        <LKpi label="Fleet KV" value={fleetKv.toFixed(1)+'%'} tone={fleetKv > 50 ? 'warn' : 'ok'} delta={`${fleetRunning} running · ${fleetWaiting} waiting`} />
-        <LKpi label="Gen Tokens" value={fmtTokens(fleetGenTotal)} delta={`${hardwareEntries.length} hosts`} />
+        <LKpi label="Fleet KV" value={fleetKvKnown ? fleetKv.toFixed(1)+'%' : '—'} tone={fleetKvKnown && fleetKv > 50 ? 'warn' : (fleetKvKnown ? 'ok' : '')} delta={fleetRunningKnown || fleetWaitingKnown ? `${fleetRunningKnown ? fleetRunning : '—'} running · ${fleetWaitingKnown ? fleetWaiting : '—'} waiting` : 'telemetry unavailable'} />
+        <LKpi label="Gen Tokens" value={fleetGenKnown ? fmtTokens(fleetGenTotal) : '—'} delta={fleetGenKnown ? `${hardwareEntries.length} hosts` : 'token telemetry unavailable'} />
         <LKpi label="Pipeline" value={`${doneStages}/${pipeline.length}`} tone={doneStages === pipeline.length && pipeline.length > 0 ? 'ok' : ''} delta={doc.status || 'unknown'} />
       </div>
 
@@ -1465,11 +1559,11 @@ function LatticeDashboard() {
               </div>
             </div>
             <table className="l-pipe">
-              <thead><tr><th>id</th><th>name</th><th>state</th><th>progress</th><th></th></tr></thead>
+              <thead><tr><th>id</th><th>name</th><th>state</th><th>progress</th><th></th><th>detail</th></tr></thead>
               <tbody>
                 {pipeline.length === 0
-                  ? <tr><td colSpan={5} style={{padding:'12px',color:L.ink3,fontFamily:L.mono,fontSize:11}}>No pipeline data — run a document first</td></tr>
-                  : pipeline.map((p, i) => <LPipeRow key={p.id || i} p={p} idx={i} />)}
+                  ? <tr><td colSpan={6} style={{padding:'12px',color:L.ink3,fontFamily:L.mono,fontSize:11}}>No pipeline data — run a document first</td></tr>
+                  : pipeline.map((p, i) => <LPipeRow key={p.id || i} p={p} idx={i} onView={onView} docId={activeDocId} />)}
               </tbody>
             </table>
           </div>
@@ -1489,42 +1583,46 @@ function LatticeDashboard() {
             <div className="l-card">
               <div className="l-card-h">
                 <h3>Inference hardware</h3>
-                <div className="meta">Prometheus · live</div>
+                <div className="meta">fleet telemetry · source-owned</div>
               </div>
               <div className="l-hw-grid">
                 {hardwareEntries.length === 0 && (
                   <div className="l-hw-cell">
                     <div className="nm">No hardware metrics</div>
-                    <div className="val"><b>—</b><span>waiting for API</span></div>
+                    <div className="val"><b>—</b><span>telemetry unavailable</span></div>
                   </div>
                 )}
                 {hardwareEntries.map(([key, host]) => {
-                  const ok = !!host.ok;
-                  const genTotal = Number(host.generation_tokens_total || 0);
+                  const online = lHostOnline(host);
+                  const statusText = online === true ? 'online' : (online === false ? 'unreachable' : 'status unavailable');
+                  const genKnown = online === true && lHasNumber(host.generation_tokens_total);
+                  const genTotal = genKnown ? Number(host.generation_tokens_total) : null;
                   const tokenRate = tokenRates[key];
-                  const hasRate = genTotal > 0 && tokenRate != null;
+                  const hasRate = genKnown && tokenRate != null;
+                  const runningKnown = lHasNumber(host.running);
+                  const waitingKnown = lHasNumber(host.waiting);
                   return (
                     <div key={key} className="l-hw-cell">
                       <div className="nm" style={{display:'flex',alignItems:'center',gap:6}}>
                         <span style={{
                           width:7,height:7,borderRadius:'50%',
-                          background:ok ? L.goodMid : L.badMid,display:'inline-block',flexShrink:0
+                          background:online === true ? L.goodMid : (online === false ? L.badMid : L.ink4),display:'inline-block',flexShrink:0
                         }} />
-                        <span>{host.label || key} · {ok ? 'online' : 'unreachable'}</span>
+                        <span>{host.label || key} · {statusText}</span>
                       </div>
                       <div style={{fontSize:10.5,color:L.ink2,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                        {host.model || 'model unknown'}
+                        {host.model || 'model unavailable'}
                       </div>
                       <div style={{fontSize:10,color:L.ink3,fontFamily:L.mono,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                         {host.role || 'inference'}
                       </div>
                       <div className="val">
-                        <b>{hasRate ? tokenRate.toFixed(1) : (genTotal > 0 ? fmtTokens(genTotal) : '—')}</b>
-                        <span>{hasRate ? 'tokens/s' : 'tokens total'}</span>
+                        <b>{hasRate ? tokenRate.toFixed(1) : (genKnown ? fmtTokens(genTotal) : '—')}</b>
+                        <span>{hasRate ? 'tokens/s' : (genKnown ? 'tokens total' : 'tokens unavailable')}</span>
                       </div>
                       <div style={{display:'flex',gap:12,marginTop:5,fontFamily:L.mono,fontSize:10.5,color:L.ink3}}>
-                        <span><b style={{color:L.ink}}>{host.running || 0}</b> running</span>
-                        <span><b style={{color:(host.waiting || 0) > 0 ? L.warn : L.ink}}>{host.waiting || 0}</b> waiting</span>
+                        <span><b style={{color:L.ink}}>{runningKnown ? host.running : '—'}</b> running</span>
+                        <span><b style={{color:waitingKnown && Number(host.waiting) > 0 ? L.warn : L.ink}}>{waitingKnown ? host.waiting : '—'}</b> waiting</span>
                       </div>
                       {host.prefix_cache_hit_rate != null && (
                         <div style={{fontFamily:L.mono,fontSize:10,color:L.ink4,marginTop:3}}>

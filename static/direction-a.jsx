@@ -354,8 +354,28 @@ function aPct(n, total) {
 
 function aFormatTs(ts) {
   if (!ts) return '—';
-  try { return new Date(ts).toLocaleString('en-AU', {timeZone: 'Australia/Melbourne'}); }
+  try {
+    return new Date(ts).toLocaleString(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    }).replace(',', '');
+  }
   catch (e) { return String(ts); }
+}
+
+function aFormatTime(ts) {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
+  } catch (e) { return String(ts); }
 }
 
 function aStatusClass(status) {
@@ -638,7 +658,7 @@ function AtriumDashboard({ initialTab = 'chronology' }) {
     return {
       id, kind: 'list', name, count, accepted, disputed, superseded,
       agreement: count > 0 ? accepted / count : 0, gate: 0.85,
-      lastUpdate: live ? new Date().toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—',
+      lastUpdate: live ? aFormatTime(new Date()) : '—',
       status: count > 0 ? 'iterating' : 'queued',
     };
   };
@@ -785,7 +805,7 @@ function AtriumDashboard({ initialTab = 'chronology' }) {
                 return (
                   <div key={i} className={"a-sig-row " + (canNav ? 'clickable' : '')}
                        onClick={undefined}>
-                    <span className="t">{s.ts ? new Date(s.ts).toLocaleTimeString('en-AU', {timeZone: 'Australia/Melbourne'}) : '—'}</span>
+                    <span className="t">{aFormatTime(s.ts)}</span>
                     <div className="body"><b>{s.type || 'EVENT'}</b>{s.msg || ''}<span className="impact">↳ {s.source || 'pipeline'}</span></div>
                   </div>
                 );

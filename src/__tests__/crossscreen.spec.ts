@@ -1,4 +1,4 @@
-// Cross-screen reconciliation tests — 37 tests
+// Cross-screen reconciliation tests — 41 tests
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -925,15 +925,162 @@ test('EvidencePanel renders unknown graph source state without mock badge', asyn
 })
 
 const STATIC_LAWYER_URL = `${testBaseURL}/static/lawyer.html`
+const STATIC_OPERATOR_URL = `${testBaseURL}/static/operator.html`
 const STATIC_DIR = join(process.cwd(), 'static')
 
-async function serveStaticLawyerJsxAsRaw(page: Page): Promise<void> {
+async function serveStaticJsxAsRaw(page: Page): Promise<void> {
   await page.route('**/static/*.jsx', async (route) => {
     const fileName = basename(new URL(route.request().url()).pathname)
     await route.fulfill({
       status: 200,
       contentType: 'text/babel',
       body: readFileSync(join(STATIC_DIR, fileName), 'utf8'),
+    })
+  })
+}
+
+async function serveStaticLawyerJsxAsRaw(page: Page): Promise<void> {
+  await serveStaticJsxAsRaw(page)
+}
+
+async function mockStaticOperatorApi(page: Page, overrides: Record<string, unknown> = {}) {
+  const docId = (overrides.docId as string) || 'static_operator_doc'
+  const status = {
+    document_id: docId,
+    label: 'Static Operator Matter',
+    data_source: 'real',
+    pipeline_stage: 'running',
+    chronology_status: 'completed',
+    people_mentioned_status: 'running',
+    individuals_status: 'queued',
+    page_count: 12,
+    upload_ts: '2026-06-29T22:00:00Z',
+    total_chunks: 10,
+    chunks_completed: 7,
+    chunks_in_progress: 2,
+    chronology_event_count: 3,
+    people_mentioned_count: 2,
+    graph_counts: {
+      chunks_total: 4,
+      claims_total: 8,
+      entities_total: 5,
+      persons_total: 2,
+      events_total: 3,
+      data_source: 'real',
+    },
+    activity: [
+      {
+        ts: '2026-06-30T00:30:00Z',
+        type: 'SYSTEM',
+        source: 'system',
+        msg: 'Operator parsed chunks indexed',
+      },
+    ],
+    ...(overrides.status as Record<string, unknown> | undefined),
+  }
+
+  await page.route('**/api/status**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/status') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data_source: 'real', documents: [status] }),
+      })
+      return
+    }
+    if (url.pathname.startsWith('/api/status/')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(status),
+      })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        workers: [
+          {
+            id: 'alienware',
+            label: 'Alienware',
+            model: 'alienware-qwen36-35b',
+            ok: false,
+            role: 'query model',
+          },
+          {
+            id: 'gb10a',
+            label: 'GB10A',
+            model: 'gb10a-qwen35-122b',
+            ok: true,
+            running: 1,
+            waiting: 0,
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.route('**/api/registers/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data_source: 'real', rows: [] }),
+    })
+  })
+  await page.route('**/api/docs/*/feedback', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ adjudications: [] }),
+    })
+  })
+
+  return docId
+}
+
+async function mockStaticLawyerMatter(page: Page, docId = 'static_export_doc') {
+  await page.route('**/api/matters', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        matters: [{ id: docId, title: 'Static Export Matter', namespace: 'static_export_ns' }],
+      }),
+    })
+  })
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        label: 'Static Export Matter',
+        data_source: 'real',
+        graph_namespace: 'static_export_ns',
+        graph_counts: { claims_total: 1, entities_total: 1, data_source: 'real' },
+      }),
+    })
+  })
+  await page.route(`**/api/registers/${docId}**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data_source: 'real', rows: [] }),
+    })
+  })
+  await page.route(`**/api/docs/${docId}/feedback`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ adjudications: [] }),
     })
   })
 }
@@ -1194,6 +1341,85 @@ test('static lawyer chat handles query_backend_unavailable degraded query respon
   ).toBeVisible({ timeout: 10000 })
   await expect(page.getByText('No answer found in the available artifact claims.')).toHaveCount(0)
   await expect(page.locator('.lw-chat-source')).toHaveCount(0)
+})
+
+test('static operator shows honest pipeline counters and fleet unavailable state', async ({ page }) => {
+  await serveStaticJsxAsRaw(page)
+  await mockStaticOperatorApi(page)
+
+  await page.goto(STATIC_OPERATOR_URL)
+
+  await expect(page.getByRole('heading', { name: /Pipeline stages/i })).toBeVisible({ timeout: 15000 })
+  await expect(page.locator('.l-kpi').filter({ hasText: 'Parse/OCR' })).toContainText('7/10')
+  await expect(page.locator('.l-kpi').filter({ hasText: 'Chunk/Index' })).toContainText('4/10')
+  await expect(page.locator('tr', { hasText: 'Parse/OCR' })).toContainText('7/10')
+  await expect(page.locator('tr', { hasText: 'Chunk/Index' })).toContainText('4/10')
+  await expect(page.locator('tr', { hasText: 'Chronology' }).getByRole('button', { name: 'Open' })).toBeVisible()
+  await expect(page.locator('tr', { hasText: 'Parse/OCR' })).toContainText('No detail')
+  await expect(page.getByText(/Alienware.*unreachable/)).toBeVisible()
+  await expect(page.getByText(/tokens unavailable/).first()).toBeVisible()
+  await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('token telemetry unavailable')
+})
+
+test('static operator browser back stays in operator context after pipeline drill-down', async ({ page }) => {
+  await serveStaticJsxAsRaw(page)
+  const docId = await mockStaticOperatorApi(page)
+
+  await page.goto(STATIC_OPERATOR_URL)
+  await expect(page.getByRole('heading', { name: /Pipeline stages/i })).toBeVisible({ timeout: 15000 })
+
+  await page.locator('tr', { hasText: 'Chronology' }).getByRole('button', { name: 'Open' }).click()
+  await expect(page).toHaveURL(new RegExp(`/static/operator\\.html#view=chronology&doc=${docId}`))
+  await expect(page.getByRole('button', { name: /Monitor/i })).toBeVisible({ timeout: 10000 })
+
+  await page.goBack()
+  await page.waitForFunction(() => {
+    return window.location.pathname.endsWith('/static/operator.html') && !window.location.hash.includes('view=')
+  })
+  expect(page.url()).toContain('/static/operator.html')
+  expect(page.url()).not.toContain('lawyer.html')
+  await expect(page.getByRole('heading', { name: /Pipeline stages/i })).toBeVisible({ timeout: 10000 })
+})
+
+test.describe('static operator local timezone', () => {
+  test.use({ timezoneId: 'Australia/Melbourne' })
+
+  test('static operator activity timestamps display browser local timezone', async ({ page }) => {
+    await serveStaticJsxAsRaw(page)
+    await mockStaticOperatorApi(page)
+
+    await page.goto(STATIC_OPERATOR_URL)
+
+    const row = page.locator('.l-act-row').filter({ hasText: 'Operator parsed chunks indexed' }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+    await expect(row).toContainText(/10:30/)
+    await expect(row).toContainText(/AEST|GMT\+10|UTC\+10/)
+    await expect(row).not.toContainText('2026-06-30T00:30:00Z')
+    await expect(row.locator('[title="2026-06-30T00:30:00.000Z"]')).toHaveCount(1)
+  })
+})
+
+test('static lawyer export actions show explicit unavailable state', async ({ page }) => {
+  await serveStaticLawyerJsxAsRaw(page)
+  await mockStaticLawyerMatter(page)
+
+  await page.goto(STATIC_LAWYER_URL)
+  await waitForStaticLawyerMatterList(page)
+
+  const cases = [
+    { button: /Microsoft Word/i, label: 'Word' },
+    { button: /PDF document/i, label: 'PDF' },
+    { button: /Excel sheet/i, label: 'Excel' },
+  ]
+
+  for (const item of cases) {
+    await page.getByRole('button', { name: /Export analysis/i }).click()
+    await page.getByRole('button', { name: item.button }).click()
+    const status = page.getByRole('status')
+    await expect(status).toContainText(`${item.label} export unavailable`)
+    await expect(status).toContainText(`This static lawyer build cannot generate ${item.label} files yet. No export was queued.`)
+    await page.getByRole('button', { name: 'Close' }).click()
+  }
 })
 
 test('login page renders with email and password fields', async ({ page }) => {

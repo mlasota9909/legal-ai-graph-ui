@@ -115,23 +115,112 @@
         if (!value) return 'queued';
         if (value === 'completed') return 'done';
         if (value === 'running' || value === 'in_progress') return 'running';
+        if (value === 'unavailable' || value === 'unknown') return 'unavailable';
         return value;
       }
 
+      function hasNumber(value) {
+        return value !== null && value !== undefined && Number.isFinite(Number(value));
+      }
+
+      function firstNumber(values) {
+        for (let i = 0; i < values.length; i += 1) {
+          if (hasNumber(values[i])) return Number(values[i]);
+        }
+        return null;
+      }
+
+      function countStage(id, name, done, total, active) {
+        if (!hasNumber(done) || !hasNumber(total) || Number(total) <= 0) {
+          return {
+            id: id,
+            name: name,
+            status: 'unavailable',
+            pct: 0,
+            progressLabel: 'unavailable',
+            detail: 'pending telemetry',
+          };
+        }
+        const safeTotal = Math.max(0, Number(total));
+        const safeDone = Math.max(0, Math.min(safeTotal, Number(done)));
+        const safeActive = Math.max(0, Number(active || 0));
+        const progressLabel = safeDone + '/' + safeTotal;
+        const status = safeDone >= safeTotal ? 'done' : (safeDone > 0 || safeActive > 0 ? 'running' : 'queued');
+        return {
+          id: id,
+          name: name,
+          status: status,
+          pct: safeTotal > 0 ? (safeDone / safeTotal) * 100 : 0,
+          progressLabel: progressLabel,
+          detail: safeActive > 0 ? progressLabel + ' done · ' + safeActive + ' active' : progressLabel + ' done',
+        };
+      }
+
       function buildPipeline(status) {
+        const gc = status.graph_counts || {};
+        const totalChunks = firstNumber([status.total_chunks, status.chunk_count, gc.chunks_expected_total]);
+        const parsedChunks = firstNumber([status.chunks_completed, status.parsed_chunks, status.ocr_completed_chunks]);
+        const indexedChunks = firstNumber([gc.chunks_total, status.indexed_chunks, status.indexed_chunk_count]);
         return [
           { id: 'ingest', name: 'Document ingest', status: mapStageStatus(status.pipeline_stage), pct: status.pipeline_stage === 'completed' ? 100 : 0 },
-          { id: 'chronology', name: 'Chronology', status: mapStageStatus(status.chronology_status), pct: status.chronology_status === 'completed' ? 100 : 0 },
-          { id: 'people', name: 'People', status: mapStageStatus(status.people_mentioned_status), pct: status.people_mentioned_status === 'completed' ? 100 : 0 },
-          { id: 'entities', name: 'Entities', status: mapStageStatus(status.individuals_status), pct: status.individuals_status === 'completed' ? 100 : 0 },
+          countStage('parse', 'Parse/OCR', parsedChunks, totalChunks, status.chunks_in_progress),
+          countStage('index', 'Chunk/Index', indexedChunks, totalChunks, status.indexing_chunks_in_progress),
+          { id: 'chronology', name: 'Chronology', status: mapStageStatus(status.chronology_status), pct: status.chronology_status === 'completed' ? 100 : 0, target: 'chronology' },
+          { id: 'people', name: 'People', status: mapStageStatus(status.people_mentioned_status), pct: status.people_mentioned_status === 'completed' ? 100 : 0, target: 'people' },
+          { id: 'entities', name: 'Entities', status: mapStageStatus(status.individuals_status), pct: status.individuals_status === 'completed' ? 100 : 0, target: 'entities' },
         ];
       }
 
-      function buildOperatorPayload(status, allDocs) {
+      function normalizeFleetHardware(fleet) {
+        const rawRows = Array.isArray(fleet)
+          ? fleet
+          : (fleet && (fleet.workers || fleet.hosts || fleet.nodes || fleet.hardware)) || [];
+        const rows = Array.isArray(rawRows)
+          ? rawRows
+          : rawRows && typeof rawRows === 'object'
+            ? Object.entries(rawRows).map(function (entry) {
+              return Object.assign({ id: entry[0] }, entry[1] || {});
+            })
+            : [];
+        if (!Array.isArray(rows)) return {};
+        return rows.reduce(function (acc, row, index) {
+          const id = row.id || row.name || row.host || row.label || ('worker_' + (index + 1));
+          const status = String(row.status || row.state || '').toLowerCase();
+          let ok = null;
+          if (typeof row.ok === 'boolean') ok = row.ok;
+          else if (typeof row.available === 'boolean') ok = row.available;
+          else if (status) {
+            ok = /^(ok|up|online|healthy|ready|running|available)$/.test(status)
+              ? true
+              : /(down|offline|unreachable|failed|error|unavailable|degraded)/.test(status)
+                ? false
+                : null;
+          }
+          acc[id] = {
+            label: row.label || row.name || row.host || id,
+            model: row.model || row.model_name || row.configured_model || row.backend_model || '',
+            role: row.role || row.kind || 'inference',
+            ok: ok,
+            status: row.status || row.state || '',
+            running: firstNumber([row.running, row.requests_running, row.active_requests, row.active]),
+            waiting: firstNumber([row.waiting, row.queue_depth, row.pending_requests, row.pending]),
+            kv_cache_pct: firstNumber([row.kv_cache_pct, row.kv_cache_percent, row.kv_percent]),
+            generation_tokens_total: firstNumber([row.generation_tokens_total, row.generated_tokens_total, row.tokens_generated_total]),
+            prefix_cache_hit_rate: firstNumber([row.prefix_cache_hit_rate, row.prefix_hit_rate]),
+          };
+          return acc;
+        }, {});
+      }
+
+      function buildOperatorPayload(status, allDocs, fleet) {
         const gc = status.graph_counts || {};
         const eventsTotal = gc.events_total != null ? gc.events_total : (status.chronology_event_count || 0);
         const peopleTotal = gc.persons_total != null ? gc.persons_total : (status.people_mentioned_count || 0);
         const entitiesTotal = gc.entities_total != null ? gc.entities_total : 0;
+        const activity = Array.isArray(status.activity) ? status.activity
+          : Array.isArray(status.events) ? status.events
+            : Array.isArray(status.activity_events) ? status.activity_events
+              : [];
         return {
           doc: {
             id: status.document_id,
@@ -156,10 +245,17 @@
             entities: { accepted: entitiesTotal, disputed: 0, superseded: 0 },
           },
           pipeline: buildPipeline(status),
-          hardware: {},
-          activity: [],
+          hardware: normalizeFleetHardware(fleet),
+          activity: activity,
           all_docs: (allDocs || []).map(function (d) {
-            return { id: d.document_id, title: d.label || d.document_id, status: d.pipeline_stage || 'unknown' };
+            return {
+              id: d.document_id,
+              title: d.label || d.document_id,
+              status: d.pipeline_stage || 'unknown',
+              pages: d.page_count || (d.graph_counts && d.graph_counts.page_count) || 0,
+              ingested: d.upload_ts,
+              pct: d.pipeline_stage === 'completed' ? 100 : 0,
+            };
           }),
         };
       }
@@ -288,18 +384,26 @@
             .then(function (r) { return r.ok ? r.json() : { documents: [] }; })
             .then(function (data) { return data.documents || []; });
         }
+        function loadFleet() {
+          return nativeFetch('/api/fleet', { headers: apiAuthHeaders() })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; });
+        }
         if (docId) {
-          return Promise.all([loadStatus(docId), loadList()]).then(function (parts) {
+          return Promise.all([loadStatus(docId), loadList(), loadFleet()]).then(function (parts) {
             const status = parts[0];
             const docs = parts[1];
-            if (!status) return buildOperatorPayload({ document_id: docId }, docs);
-            return buildOperatorPayload(status, docs);
+            const fleet = parts[2];
+            if (!status) return buildOperatorPayload({ document_id: docId }, docs, fleet);
+            return buildOperatorPayload(status, docs, fleet);
           });
         }
-        return loadList().then(function (docs) {
-          if (!docs.length) return buildOperatorPayload({ document_id: '' }, []);
+        return Promise.all([loadList(), loadFleet()]).then(function (parts) {
+          const docs = parts[0];
+          const fleet = parts[1];
+          if (!docs.length) return buildOperatorPayload({ document_id: '' }, [], fleet);
           return loadStatus(docs[0].document_id).then(function (status) {
-            return buildOperatorPayload(status || docs[0], docs);
+            return buildOperatorPayload(status || docs[0], docs, fleet);
           });
         });
       }
@@ -370,13 +474,49 @@
   <script type="text/babel" data-presets="react">
     // Workspace shell — same component used inside the design-canvas presentation
     // (index.html), here mounted as the standalone operator app.
+    function readOperatorRoute() {
+      const params = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      return {
+        view: params.get('view') || 'monitor',
+        highlight: params.get('highlight') || null,
+        docId: params.get('doc') || null,
+      };
+    }
+
+    function writeOperatorRoute(view, highlight, docId) {
+      const params = new URLSearchParams();
+      if (view && view !== 'monitor') params.set('view', view);
+      if (highlight) params.set('highlight', highlight);
+      if (docId) params.set('doc', docId);
+      const path = window.location.pathname + window.location.search;
+      const next = params.toString() ? path + '#' + params.toString() : path;
+      window.history.pushState(null, '', next);
+    }
+
     function Workspace() {
-      const [view, setView] = React.useState('monitor');
-      const [highlight, setHighlight] = React.useState(null);
+      const initialRoute = readOperatorRoute();
+      const [view, setView] = React.useState(initialRoute.view);
+      const [highlight, setHighlight] = React.useState(initialRoute.highlight);
+      React.useEffect(() => {
+        const syncRoute = () => {
+          const route = readOperatorRoute();
+          setView(route.view);
+          setHighlight(route.highlight);
+          if (route.docId) localStorage.setItem('op_selected_doc', route.docId);
+        };
+        window.addEventListener('hashchange', syncRoute);
+        window.addEventListener('popstate', syncRoute);
+        return () => {
+          window.removeEventListener('hashchange', syncRoute);
+          window.removeEventListener('popstate', syncRoute);
+        };
+      }, []);
       const go = (v, id, docId) => {
         setView(v);
         setHighlight(id || null);
-        if (docId) localStorage.setItem('op_selected_doc', docId);
+        const nextDocId = docId || localStorage.getItem('op_selected_doc') || null;
+        if (nextDocId) localStorage.setItem('op_selected_doc', nextDocId);
+        writeOperatorRoute(v, id || null, nextDocId);
         setTimeout(() => setHighlight(null), 2600);
       };
       return (

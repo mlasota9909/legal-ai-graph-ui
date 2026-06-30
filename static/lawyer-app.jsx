@@ -354,9 +354,15 @@ const lawStyle = `
   .lw-exp-row .t{font-size:13px;color:${LW.ink};font-weight:500;line-height:1.3}
   .lw-exp-row .s{font-size:11px;color:${LW.ink3};margin-top:1px;line-height:1.4}
   .lw-exp-foot{font-size:10.5px;color:${LW.ink3};padding:8px 10px 6px;border-top:1px solid ${LW.ruleSoft};line-height:1.5;margin-top:4px}
-  .lw-exp-fired{display:flex;align-items:center;gap:10px;padding:14px 12px;color:${LW.accent};
+  .lw-exp-fired{display:flex;align-items:flex-start;gap:10px;padding:14px 12px;color:${LW.accent};
     font-size:12.5px;line-height:1.5}
   .lw-exp-fired .d{width:9px;height:9px;border-radius:50%;background:${LW.accent};flex-shrink:0;animation:lw-pulse 1.4s ease-in-out infinite}
+  .lw-exp-fired.unavailable{color:${LW.warn};background:${LW.warnSoft};border:1px solid ${LW.rule};border-radius:8px;margin:4px}
+  .lw-exp-fired.unavailable .d{background:${LW.warn};animation:none;margin-top:5px}
+  .lw-exp-fired .t{font-weight:600;color:${LW.ink};margin-bottom:2px}
+  .lw-exp-fired .s{color:${LW.ink2};font-size:11.5px}
+  .lw-exp-dismiss{border:1px solid ${LW.rule};background:${LW.panel};border-radius:6px;color:${LW.ink2};
+    padding:5px 8px;font-size:11px;margin-top:8px;cursor:pointer}
 
   /* ── Upload modal "steer" field ─────────────────────── */
   .lw-up-card{background:${LW.bg};border:1px solid ${LW.rule};border-radius:10px;padding:12px 14px;
@@ -967,15 +973,14 @@ const LIST_ARTIFACTS = ['chronology', 'people', 'entities', 'docrefs', 'extrefs'
 function ExportMenu({ scope, label='Export', subtle=false }) {
   // scope: an artifact id (chronology, people, ...) or 'document' for the whole bundle
   const [open, setOpen] = React.useState(false);
-  const [fired, setFired] = React.useState(null);
-  const close = () => { setOpen(false); setFired(null); };
+  const [unavailable, setUnavailable] = React.useState(null);
+  const close = () => { setOpen(false); setUnavailable(null); };
   const excelEligible = scope === 'document'
     ? true   // whole-doc export rolls all lists into an .xlsx workbook
     : LIST_ARTIFACTS.includes(scope);
 
   const fire = (fmt) => {
-    setFired(fmt);
-    setTimeout(close, 1300);
+    setUnavailable(fmt);
   };
 
   return (
@@ -995,13 +1000,17 @@ function ExportMenu({ scope, label='Export', subtle=false }) {
         <>
           <div onClick={close} style={{ position:'fixed', inset:0, zIndex:39 }} />
           <div className="lw-exp-pop">
-            {fired && (
-              <div className="lw-exp-fired">
+            {unavailable && (
+              <div className="lw-exp-fired unavailable" role="status" aria-live="polite">
                 <span className="d" />
-                Preparing {fired}… we’ll notify you when it’s ready.
+                <div>
+                  <div className="t">{unavailable} export unavailable</div>
+                  <div className="s">This static lawyer build cannot generate {unavailable} files yet. No export was queued.</div>
+                  <button className="lw-exp-dismiss" onClick={close}>Close</button>
+                </div>
               </div>
             )}
-            {!fired && <>
+            {!unavailable && <>
               <div className="lw-exp-hd">
                 {scope === 'document' ? 'Export this document’s analysis' : 'Export this artifact'}
               </div>
