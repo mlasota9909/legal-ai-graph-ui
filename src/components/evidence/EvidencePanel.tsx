@@ -3,6 +3,7 @@ import ForceGraph2D from 'react-force-graph-2d'
 import { SourceDot } from '../shared/SourceDot'
 import type {
   GraphEdge,
+  GraphEdgeKind,
   GraphNode,
   GraphSubgraphResponse,
   RegisterResponse,
@@ -40,6 +41,7 @@ const NODE_COLORS: Record<string, string> = {
 const NODE_LEGEND = Object.entries(NODE_COLORS)
 const GRAPH_DEPTHS = [1, 2, 3] as const
 type GraphDepth = (typeof GRAPH_DEPTHS)[number]
+const GRAPH_EDGE_KINDS: GraphEdgeKind[] = ['entity', 'provenance', 'all']
 
 const REGISTER_FALLBACK_TYPES: RegisterType[] = ['authority', 'events', 'people']
 
@@ -109,7 +111,7 @@ async function fetchRegister(docId: string, type: RegisterType): Promise<Registe
 }
 
 async function resolveRootNode(docId: string, claimId: string | null): Promise<string | null> {
-  if (claimId?.includes(':')) {
+  if (claimId) {
     return claimId
   }
   // Fall back through register types until a provenance chunk_id is found
@@ -127,6 +129,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
   const [graph, setGraph] = useState<GraphSubgraphResponse | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [depth, setDepth] = useState<GraphDepth>(2)
+  const [edgeKind, setEdgeKind] = useState<GraphEdgeKind>('entity')
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 })
 
   useEffect(() => {
@@ -175,7 +178,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
 
         const url =
           `/api/graph?namespace=${encodeURIComponent(namespace)}` +
-          `&node=${encodeURIComponent(rootNode)}&edge_kinds=entity&depth=${depth}`
+          `&node=${encodeURIComponent(rootNode)}&edge_kinds=${edgeKind}&depth=${depth}`
         const response = await fetch(url, { headers: authHeaders() })
         if (cancelled) return
         if (!response.ok) {
@@ -201,7 +204,7 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
     return () => {
       cancelled = true
     }
-  }, [namespace, docId, claimId, depth])
+  }, [namespace, docId, claimId, depth, edgeKind])
 
   const graphData = useMemo(() => {
     if (!graph) return { nodes: [], links: [] }
@@ -304,6 +307,22 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
                 </button>
                 {index < GRAPH_DEPTHS.length - 1 && <span>·</span>}
               </span>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 font-mono text-[11px] text-[var(--ink-3)]">
+            {GRAPH_EDGE_KINDS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={`rounded border px-2 py-1 ${
+                  edgeKind === value
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'border-[var(--rule)] text-[var(--ink-3)]'
+                }`}
+                onClick={() => setEdgeKind(value)}
+              >
+                {value}
+              </button>
             ))}
           </div>
           <span className="ml-auto flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">

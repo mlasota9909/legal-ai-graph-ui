@@ -781,6 +781,87 @@ test('live EvidencePanel requests api/graph endpoint for discovered graph seed',
   expect(graphUrl.searchParams.get('node')).toBe(seed.node)
 })
 
+test('register row opens graph workbench with provenance seed', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'test_register_graph_link',
+    registerRows: [
+      {
+        id: 'row-node-1',
+        type: 'authority',
+        entity: { canonical_name: 'Graph linked authority', name: 'Graph linked authority' },
+        provenance: [{ chunk_id: 'graph:seed:42', page_start: 9 }],
+        salience_score: 0.91,
+      },
+    ],
+  })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        namespace: 'test_evidence_ns',
+        document_id: docId,
+        root_node_id: 'graph:seed:42',
+        depth: 2,
+        edge_kinds: new URL(route.request().url()).searchParams.get('edge_kinds') ?? 'entity',
+        data_source: 'real',
+        nodes: [
+          {
+            id: 'graph:seed:42',
+            labels: ['AUTHORITY'],
+            primary_type: 'AUTHORITY',
+            display_name: 'Graph linked authority',
+            properties: {},
+          },
+          {
+            id: 'graph:related:1',
+            labels: ['CLAIM'],
+            primary_type: 'CLAIM',
+            display_name: 'Related claim',
+            properties: {},
+          },
+        ],
+        edges: [
+          {
+            id: 'edge:seed-related',
+            source: 'graph:seed:42',
+            target: 'graph:related:1',
+            type: 'ABOUT',
+            key_props: { method: 'relationship_enrichment' },
+            provenance: { chunk_id: 'graph:seed:42', page_start: 9 },
+            properties: {},
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}/entities`)
+  await expect(page.getByText('Graph linked authority').first()).toBeVisible({ timeout: 10000 })
+
+  const graphRequest = page.waitForRequest((request) => request.url().includes('/api/graph'))
+  await page.getByRole('button', { name: 'View graph' }).first().click()
+  const initialRequest = await graphRequest
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 10000,
+  })
+
+  const initialGraphUrl = new URL(initialRequest.url())
+  expect(initialGraphUrl.searchParams.get('node')).toBe('graph:seed:42')
+  expect(initialGraphUrl.searchParams.get('edge_kinds')).toBe('entity')
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+
+  const provenanceRequest = page.waitForRequest((request) => {
+    if (!request.url().includes('/api/graph')) return false
+    return new URL(request.url()).searchParams.get('edge_kinds') === 'provenance'
+  })
+  await page.getByRole('button', { name: 'provenance' }).click()
+  await provenanceRequest
+})
+
 test('EvidencePanel graph fallback shows unavailable when namespace is missing', async ({ page }) => {
   const docId = await mockEvidencePanelDocument(page, {
     docId: 'test_evidence_no_namespace',

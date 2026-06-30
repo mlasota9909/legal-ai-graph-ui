@@ -87,6 +87,23 @@ function formatChronologyDisplayDate(row: ChronologyClaim): { text: string; plac
   return { text: '—', placeholder: Boolean(row.date_certainty) }
 }
 
+function GraphSeedButton({ seed }: { seed?: string | null }) {
+  const nav = useNav()
+  if (!seed || !nav) return null
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        nav.go('evidence', seed)
+      }}
+      className="rounded border border-[var(--rule)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--accent)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+    >
+      View graph
+    </button>
+  )
+}
+
 function ChronologyTimeline({
   rows,
   highlight,
@@ -162,6 +179,7 @@ function ChronologyTimeline({
                   conf={row.conf}
                 />
               )}
+              <GraphSeedButton seed={row.graphSeed} />
             </div>
             {row.supersedeReason && (
               <div className="mt-2 rounded-lg bg-[var(--rule-soft)] px-3 py-2 text-[11.5px] text-[var(--ink-2)]">
@@ -213,6 +231,7 @@ function EntityList({ rows, highlight, showFieldIds }: { rows: EntityRow[]; high
                 <span>{row.aliases} aliases</span>
                 {row.candidate && <span className="rounded-full bg-[var(--warn-soft)] px-2 py-0.5 text-[10.5px] text-[var(--warn)]">candidate</span>}
                 {row.recent && <span className="rounded-full bg-[var(--good-soft)] px-2 py-0.5 text-[10.5px] text-[var(--good)]">new</span>}
+                <GraphSeedButton seed={row.graphSeed} />
               </div>
             </div>
             <div className="text-right font-mono text-[11.5px] text-[var(--ink-2)]">
@@ -279,6 +298,7 @@ function PeopleList({ rows, highlight, showFieldIds }: { rows: PersonRow[]; high
                     {row.review ? 'review' : 'disputed'}
                   </span>
                 )}
+                <GraphSeedButton seed={row.graphSeed} />
               </div>
             </div>
             <div className="text-right font-mono text-[11.5px] text-[var(--ink-2)]">

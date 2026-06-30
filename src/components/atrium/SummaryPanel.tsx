@@ -1,4 +1,5 @@
 import type { SummaryResponse } from '../../types/contracts'
+import { useNav } from '../../context/NavContext'
 
 interface SummaryPanelProps {
   summary: SummaryResponse | null
@@ -6,6 +7,8 @@ interface SummaryPanelProps {
 }
 
 export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
+  const nav = useNav()
+
   if (!summary) {
     return (
       <div className="px-6 py-8 text-[13px] text-[var(--ink-3)]">
@@ -33,6 +36,35 @@ export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
     )
   }
 
+  const graphRefs = (provenance: SummaryResponse['overview']['provenance']) => {
+    if (!nav) return null
+    const seeds = [
+      ...new Set(
+        provenance
+          .map((p) => p.node_id || p.source_chunk_id)
+          .filter((seed): seed is string => typeof seed === 'string' && seed.length > 0)
+      ),
+    ]
+    if (seeds.length === 0) return null
+    return (
+      <div className="mt-2 flex flex-wrap gap-1">
+        {seeds.slice(0, 3).map((seed, index) => (
+          <button
+            key={seed}
+            type="button"
+            onClick={() => nav.go('evidence', seed)}
+            className="rounded border border-[var(--rule)] px-2 py-0.5 font-mono text-[10px] text-[var(--accent)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            View graph {index + 1}
+          </button>
+        ))}
+        {seeds.length > 3 && (
+          <span className="font-mono text-[10px] text-[var(--ink-3)]">+{seeds.length - 3} more graph refs</span>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="divide-y divide-[var(--rule-soft)]">
       {/* Header / data source badge */}
@@ -49,6 +81,7 @@ export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
       <div className="px-6 py-5">
         <p className="text-[var(--ink)] leading-relaxed text-[13.5px]">{summary.overview.text}</p>
         {pageRefs(summary.overview.provenance)}
+        {graphRefs(summary.overview.provenance)}
       </div>
 
       {/* Sections */}
@@ -61,6 +94,7 @@ export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
             <>
               <p className="text-[13px] text-[var(--ink)] leading-relaxed">{section.text}</p>
               {pageRefs(section.provenance)}
+              {graphRefs(section.provenance)}
             </>
           )}
         </div>

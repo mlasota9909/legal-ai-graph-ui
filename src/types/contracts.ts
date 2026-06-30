@@ -112,6 +112,7 @@ export interface AgreementSnapshot {
 export interface ChronologyClaim {
   id: string
   claim_id?: string
+  graphSeed?: string | null
   date: string
   date_certainty?: string
   page: number
@@ -132,6 +133,7 @@ export interface ChronologyClaim {
 
 export interface EntityRow {
   id: string
+  graphSeed?: string | null
   canonical: string
   type: string
   mentions: number
@@ -148,6 +150,7 @@ export interface EntityRow {
 
 export interface PersonRow {
   id: string
+  graphSeed?: string | null
   name: string
   role: string
   mentions: number

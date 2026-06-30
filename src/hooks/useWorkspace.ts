@@ -299,6 +299,7 @@ function registerEventToChronology(row: RegisterRow, index: number): ChronologyC
   const prov = row.provenance[0]
   return {
     id: row.id || `reg-event-${index}`,
+    graphSeed: prov?.chunk_id ?? row.id ?? null,
     date: (e.event_date as string | null | undefined) ?? 'undated',
     page: prov?.page ?? prov?.page_start ?? 0,
     title: ((e.canonical_name ?? e.name) as string | undefined) ?? 'Untitled',
@@ -316,6 +317,7 @@ function registerPersonToRow(row: RegisterRow, index: number): PersonRow {
   const page = prov?.page ?? prov?.page_start
   return {
     id: row.id || `reg-person-${index}`,
+    graphSeed: prov?.chunk_id ?? row.id ?? null,
     name: ((e.canonical_name ?? e.name) as string | undefined) ?? 'Unknown',
     role: ((e.role ?? e.title ?? e.party_side) as string | undefined) ?? 'Mentioned person',
     mentions: typeof e.views === 'number' ? e.views : row.provenance.length,
@@ -340,6 +342,7 @@ function registerEntityToRow(row: RegisterRow, index: number): EntityRow {
   const surfaceNames = Array.isArray(e.surface_names) ? (e.surface_names as string[]) : []
   return {
     id: row.id || `reg-entity-${index}`,
+    graphSeed: prov?.chunk_id ?? row.id ?? null,
     canonical: ((e.canonical_name ?? e.name) as string | undefined) ?? 'Unknown',
     type: ((e.entity_type ?? row.type) as string).toUpperCase(),
     mentions: typeof e.views === 'number' ? e.views : row.provenance.length,
