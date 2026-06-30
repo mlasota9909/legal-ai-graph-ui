@@ -17,6 +17,125 @@ type LiveSummaryProbe = {
   data: { data_source?: string }
 }
 
+type LiveEvidenceSeed = {
+  docId: string
+  namespace: string
+  node: string
+  registerType: 'authority' | 'events' | 'people'
+  graphNodes: number
+  graphEdges: number
+}
+
+type LiveEvidenceDiscovery =
+  | { seed: LiveEvidenceSeed; skipReason?: never }
+  | { seed: null; skipReason: string }
+
+const LIVE_EVIDENCE_REGISTER_TYPES = ['authority', 'events', 'people'] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+async function getJson(request: APIRequestContext, url: string): Promise<unknown | null> {
+  try {
+    const response = await request.get(url, { timeout: 10000 })
+    if (!response.ok()) return null
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+async function verifyLiveGraph(
+  request: APIRequestContext,
+  namespace: string,
+  node: string
+): Promise<{ nodes: number; edges: number } | null> {
+  const url =
+    `/api/graph?namespace=${encodeURIComponent(namespace)}` +
+    `&node=${encodeURIComponent(node)}&edge_kinds=entity&depth=2`
+  const payload = await getJson(request, url)
+  if (!isRecord(payload)) return null
+  const nodes = Array.isArray(payload.nodes) ? payload.nodes.length : 0
+  const edges = Array.isArray(payload.edges) ? payload.edges.length : 0
+  return nodes > 0 ? { nodes, edges } : null
+}
+
+function firstRegisterSeed(payload: unknown): string | null {
+  if (!isRecord(payload) || !Array.isArray(payload.rows)) return null
+  const firstRow = isRecord(payload.rows[0]) ? payload.rows[0] : null
+  if (!firstRow || !Array.isArray(firstRow.provenance)) return null
+  const firstProvenance = isRecord(firstRow.provenance[0]) ? firstRow.provenance[0] : null
+  return firstProvenance ? asString(firstProvenance.chunk_id) : null
+}
+
+async function discoverLiveEvidenceSeed(
+  request: APIRequestContext
+): Promise<LiveEvidenceDiscovery> {
+  const statusList = await getJson(request, '/api/status?limit=50')
+  if (!isRecord(statusList) || !Array.isArray(statusList.documents)) {
+    return {
+      seed: null,
+      skipReason: 'Core backend unavailable or /api/status returned no document list.',
+    }
+  }
+
+  const docIds = statusList.documents
+    .filter(isRecord)
+    .map((doc) => asString(doc.document_id))
+    .filter((docId): docId is string => docId !== null && docId !== MOCK_DOC_ID)
+
+  for (const docId of docIds) {
+    const status = await getJson(request, `/api/status/${encodeURIComponent(docId)}`)
+    if (!isRecord(status)) continue
+
+    const namespace = asString(status.graph_namespace)
+    if (!namespace) continue
+
+    for (const registerType of LIVE_EVIDENCE_REGISTER_TYPES) {
+      const register = await getJson(
+        request,
+        `/api/registers/${encodeURIComponent(docId)}?type=${registerType}&limit=5`
+      )
+      const node = firstRegisterSeed(register)
+      if (!node) continue
+
+      const graph = await verifyLiveGraph(request, namespace, node)
+      if (graph) {
+        return {
+          seed: {
+            docId,
+            namespace,
+            node,
+            registerType,
+            graphNodes: graph.nodes,
+            graphEdges: graph.edges,
+          },
+        }
+      }
+
+      break
+    }
+  }
+
+  return {
+    seed: null,
+    skipReason:
+      'Core backend is live, but no /api/status document had a usable namespace, register seed, and graph response.',
+  }
+}
+
+async function requireLiveEvidenceSeed(request: APIRequestContext): Promise<LiveEvidenceSeed> {
+  const discovery = await discoverLiveEvidenceSeed(request)
+  test.skip(discovery.seed === null, discovery.skipReason)
+  if (!discovery.seed) throw new Error(discovery.skipReason)
+  return discovery.seed
+}
+
 async function findLiveSummary(request: APIRequestContext): Promise<LiveSummaryProbe | null> {
   for (const docId of REAL_DOC_IDS) {
     try {
@@ -487,17 +606,20 @@ test('lattice KPI source badges show unavailable when metric source fields are o
   }
 })
 
-test('evidence graph panel loads with real data', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel graph panel loads with discovered real data', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
   // Navigate directly to evidence view
-  await page.goto(`/runs/${docId}/evidence`)
-  await page.waitForTimeout(3000)
+  await page.goto(`/runs/${seed.docId}/evidence`)
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
 
   // The panel should show a heading or content — not the old stub text
   const bodyText = await page.locator('body').innerText()
   expect(bodyText).not.toContain('Evidence inspector (stub)')
+  expect(bodyText).not.toContain('Evidence graph unavailable')
+  await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 
   // Should show back navigation
   const backBtn = page.locator('button', { hasText: /Back/ }).first()
@@ -505,7 +627,7 @@ test('evidence graph panel loads with real data', async ({ page }) => {
 
   // Clicking back should return to monitor
   await backBtn.click()
-  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+  await expect(page).toHaveURL(new RegExp(`/runs/${seed.docId}$`))
 })
 
 test('entity register includes organisation and document types', async ({ page }) => {
@@ -529,71 +651,83 @@ test('entity register includes organisation and document types', async ({ page }
   expect(entityCount).toBeGreaterThan(400)
 })
 
-test('monitor relationship graph card navigates to evidence view', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel relationship graph card navigates to discovered evidence view', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
+  await page.goto(`/runs/${seed.docId}`)
   const graphCard = page.locator('button', { hasText: /Relationship graph|View graph/ }).first()
   await expect(graphCard).toBeVisible({ timeout: 10000 })
   await graphCard.click()
 
-  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  await expect(page).toHaveURL(new RegExp(`/runs/${seed.docId}/evidence`), { timeout: 10000 })
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
   const bodyText = await page.locator('body').innerText()
   expect(bodyText).not.toContain('Evidence inspector (stub)')
 })
 
-test('atrium graph button navigates to evidence view', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel atrium graph button navigates to discovered evidence view', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
-  await page.goto(`/runs/${docId}/chronology`)
+  await page.goto(`/runs/${seed.docId}/chronology`)
   await page.waitForTimeout(1000)
 
   const graphBtn = page.locator('button', { hasText: /^Graph/ }).first()
   await expect(graphBtn).toBeVisible({ timeout: 10000 })
   await graphBtn.click()
 
-  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  await expect(page).toHaveURL(new RegExp(`/runs/${seed.docId}/evidence`), { timeout: 10000 })
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
   const backBtn = page.locator('button', { hasText: /Back/ }).first()
   await expect(backBtn).toBeVisible()
 })
 
-test('evidence panel shows depth selector buttons', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel shows depth selector buttons for discovered graph seed', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
-  await page.goto(`/runs/${docId}/evidence`)
-  await page.waitForTimeout(4000)
+  await page.goto(`/runs/${seed.docId}/evidence`)
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
 
   const hopBtn = page.locator('button', { hasText: /hop/i }).first()
   await expect(hopBtn).toBeVisible()
 })
 
-test('evidence back button returns to monitor', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel back button returns to discovered document monitor', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
-  await page.goto(`/runs/${docId}/evidence`)
-  await page.waitForTimeout(2000)
+  await page.goto(`/runs/${seed.docId}/evidence`)
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
+  await expect(page.locator('button', { hasText: /Back/i })).toBeVisible({ timeout: 30000 })
 
   await page.locator('button', { hasText: /Back/i }).click()
-  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+  await expect(page).toHaveURL(new RegExp(`/runs/${seed.docId}$`))
 })
 
-test('evidence panel requests api/graph endpoint', async ({ page }) => {
-  await page.goto('/')
-  const docId = await waitForRealDoc(page)
+test('live EvidencePanel requests api/graph endpoint for discovered graph seed', async ({ page, request }) => {
+  const seed = await requireLiveEvidenceSeed(request)
 
-  let captured = false
+  let capturedUrl: string | null = null
   await page.route('**/api/graph**', (route) => {
-    captured = true
+    capturedUrl = route.request().url()
     route.continue()
   })
 
-  await page.goto(`/runs/${docId}/evidence`)
-  await page.waitForTimeout(5000)
+  await page.goto(`/runs/${seed.docId}/evidence`)
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible({
+    timeout: 30000,
+  })
 
-  expect(captured).toBe(true)
+  if (capturedUrl === null) throw new Error('EvidencePanel did not request /api/graph')
+  const graphUrl = new URL(capturedUrl)
+  expect(graphUrl.searchParams.get('namespace')).toBe(seed.namespace)
+  expect(graphUrl.searchParams.get('node')).toBe(seed.node)
 })
 
 test('EvidencePanel graph fallback shows unavailable when namespace is missing', async ({ page }) => {

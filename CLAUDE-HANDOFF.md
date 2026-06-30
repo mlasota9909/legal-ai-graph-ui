@@ -13,8 +13,9 @@ UI chat action batches for review items U1, U2, U4, and U3 source honesty:
 - U3: fix Atrium list source derivation, add Lattice KPI/agreement field source metadata, make DocumentPicker fallback counts non-real/unavailable when `/api/status` lacks `graph_counts`, and stop augmentation provider rows from falling back to seed counts when source keys are omitted.
 - U5: mark legacy static lawyer trace/upload seams unavailable instead of calling `/trace` or `/api/upload`.
 - U7/MAC-49: harden EvidencePanel seed and graph fallback safety without fabricating graph data.
+- MAC-51: make live EvidencePanel Playwright tests discover document, namespace, and graph seed dynamically.
 
-Pre-existing dirty files before the MAC-49 continuation: untracked `.vite/` only. It remains untracked and was not committed.
+Pre-existing dirty files before the MAC-51 continuation: untracked `.vite/` only. It remains untracked and was not committed.
 
 ## Docs read
 
@@ -44,6 +45,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - U7 actioned: EvidencePanel now shows explicit unavailable states for missing namespace, missing seed/provenance, non-OK graph endpoint responses, and empty graph responses.
 - U7 actioned: graph source badges use the shared source taxonomy, so unknown future graph `data_source` values display as `unknown source state`, not mock.
 - U7 actioned: `useWorkspace` clears stale graph namespace on document switches and when status responses do not contain a usable namespace.
+- MAC-51 actioned: live EvidencePanel tests now discover candidate documents from `/api/status`, read `graph_namespace` from `/api/status/{docId}`, resolve the UI-equivalent register provenance seed, and preflight `/api/graph` before navigating through the live UI path.
+- MAC-51 actioned: live EvidencePanel tests skip with an explicit backend-unavailable/no-usable-seed reason when the live tier cannot run, while mocked fallback tests remain backend-independent.
 
 ## Files changed
 
@@ -85,6 +88,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Created `MAC-48` (`[UI] Static lawyer app marks legacy trace/upload seams unavailable`) under `MAC-16`, label `ui`, status `Done`.
 - Updated `MAC-49` (`UI EvidencePanel seed and graph fallback safety`), label `ui`, status `Done`.
 - Created successor `MAC-51` (`[UI] Discover live EvidencePanel test document and seed dynamically`), label `ui`, status `Todo`, related to `MAC-49`.
+- Updated `MAC-51` (`[UI] Discover live EvidencePanel test document and seed dynamically`), label `ui`, status `Done`.
+- Created `MAC-52` (`[UI] Classify and harden live AskPanel query Playwright timeout`), label `ui`, status `Todo`, related to `MAC-51`, `MAC-44`, and `MAC-42`.
 
 ## Tests run
 
@@ -105,6 +110,11 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - `PLAYWRIGHT_PORT=5183 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "static lawyer (legacy trace and upload seams are unavailable|app loads matter list|chat handles query_backend_unavailable)" --reporter=line`: pass, 3/3.
 - `PLAYWRIGHT_PORT=5184 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "EvidencePanel graph fallback|unknown graph source" --reporter=line`: pass, 5/5.
 - `PLAYWRIGHT_PORT=5185 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "EvidencePanel|evidence graph|graph fallback|seed" --reporter=line`: 5 mocked MAC-49 tests passed; one live-backend EvidencePanel test failed because Vite proxy could not connect to Core on `127.0.0.1:8090`.
+- `PLAYWRIGHT_PORT=5186 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "EvidencePanel graph fallback|unknown graph source" --reporter=line`: pass, 5/5.
+- `PLAYWRIGHT_PORT=5187 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "live EvidencePanel|EvidencePanel.*live|graph seed" --reporter=line`: skipped 6/6 with Core unavailable via Vite proxy (`ECONNREFUSED 127.0.0.1:8090`).
+- Started Core API from `/home/mlasota/legal-ai-graph` with `uv run python -m legal_ai_graph.api.app`; `/health` returned `{"status":"ok"}` and `/api/status` returned real documents.
+- `PLAYWRIGHT_PORT=5189 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --grep "live EvidencePanel|EvidencePanel.*live|graph seed" --reporter=line`: pass, 6/6.
+- `PLAYWRIGHT_PORT=5190 PLAYWRIGHT_REUSE_EXISTING_SERVER=false npx playwright test src/__tests__/crossscreen.spec.ts --reporter=line`: 35 passed, 1 failed. Failure was unrelated `AskPanel returns an answer with citations` timing out waiting for `/api/query` after entering `Thinking...`; Core `/health` and `/api/status` remained responsive.
 - `rg -n "/api/upload|/api/docs/.*/trace|/trace" static`: no matches.
 - `git diff --check`: pass.
 
@@ -127,6 +137,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - EvidencePanel graph 404/non-OK shows `Evidence graph unavailable` / `The evidence graph endpoint did not return usable graph data.`
 - EvidencePanel empty graph shows `Evidence graph unavailable` / `The evidence graph endpoint returned no graph nodes for this item.`
 - EvidencePanel real graph success path remains backed by `/api/graph`; unknown graph source states render as `unknown source state`, not mock.
+- Live EvidencePanel tests no longer require the hardcoded default real document. They dynamically discover the document, namespace, register seed, and usable graph before exercising the UI.
 
 ## Remaining risks
 
@@ -135,7 +146,7 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 - Register/status fetches already had cancellation guards before this run; this batch did not broaden stale-response testing to every possible status/register path.
 - If Core wants omitted augmentation providers shown as real zero, it should return explicit zero keys in `external_sources_by_source`.
 - Live EvidencePanel tests still require Core to be listening on `localhost:8090`; MAC-49 mocked fallback coverage is backend-independent and green.
-- Existing live EvidencePanel tests still assume the default real document path. `MAC-51` tracks making that discovery dynamic.
+- Full crossscreen is still not green end-to-end: `MAC-52` tracks the unrelated live AskPanel query timeout observed after MAC-51 passed.
 
 ## Architect decisions needed
 
@@ -150,8 +161,8 @@ Missing/nonexistent when checked: `CODE-REVIEW-BRIEF.md`, `AGENTS.md`, `.codex/W
 ## Deferred review items
 
 - Static synthesis remains mock-only but honestly badged; broader static artifact parity is still roadmap.
-- Live EvidencePanel test discovery hardening is deferred to `MAC-51`.
+- Live AskPanel query timeout classification is deferred to `MAC-52`.
 
 ## Exact next recommended task
 
-Move to `MAC-51`: make live EvidencePanel Playwright setup discover a valid document, namespace, and seed dynamically from the live API instead of relying on the default hardcoded real document path.
+Move to `MAC-52`: classify and harden the live AskPanel query Playwright timeout without weakening real query coverage or typed degraded-query handling.

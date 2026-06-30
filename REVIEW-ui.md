@@ -69,6 +69,15 @@
 - **Linear:** `MAC-49` labelled `ui`, status `Done`.
 - **Deferred:** live EvidencePanel tests still depend on a hardcoded/default real document path; `MAC-51` tracks making that discovery dynamic.
 
+### 2026-06-30 — UI Codex MAC-51 live EvidencePanel discovery
+
+- **U7 live-test hardening actioned:** live EvidencePanel Playwright tests now discover a real document from `/api/status`, fetch its `graph_namespace` from `/api/status/{docId}`, take the same first authority/events/people register provenance seed used by the UI, and preflight `/api/graph` before opening the live UI path.
+- **Backend unavailable classification actioned:** if `/api/status` is unavailable before the live EvidencePanel tier, the live tests skip with an explicit Core-backend-unavailable reason instead of failing as a UI regression.
+- **Hardcoded EvidencePanel doc removed:** live EvidencePanel tests no longer force `original_royalcomm` through `waitForRealDoc`; other legacy live tests still use that helper.
+- **Tests run:** `npx tsc --noEmit` passed; `npm run build` passed; `rg -n "source_uri" src static` returned no matches; mocked EvidencePanel fallback grep passed 5/5; live EvidencePanel grep skipped 6/6 when Core was down, then passed 6/6 after starting Core locally; full crossscreen suite with Core running passed 35/36, with the remaining failure isolated to unrelated `AskPanel returns an answer with citations`.
+- **Files changed:** `src/__tests__/crossscreen.spec.ts`, `CLAUDE-HANDOFF.md`, `REVIEW-ui.md`, `CLAUDE.md`.
+- **Linear:** `MAC-51` labelled `ui`, status `Done`; `MAC-52` created for the unrelated live AskPanel query timeout.
+
 ## 1. Executive summary
 
 - Overall UI alignment with VISION.md: The SPA mostly behaves as a projection surface over backend APIs, with real register rows, summary panels, evidence graph navigation, source badges, and post-run review concepts. The main gaps are source-badge honesty and contract drift.
