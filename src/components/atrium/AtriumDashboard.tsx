@@ -35,6 +35,7 @@ import {
   personListStatus,
 } from '../../utils/listStatus'
 import { SourceDot } from '../shared/SourceDot'
+import { ReviewDocumentControls } from '../shared/ReviewDocumentControls'
 
 interface ClaimDetail {
   id: string
@@ -80,6 +81,26 @@ function formatViewLabel(view: ArtifactView): string {
   if (view === 'exec') return 'Executive memo'
   if (view === 'detailed') return 'Detailed analysis'
   return 'Chronology'
+}
+
+function hasRealListRows(data: WorkspaceData, view: ArtifactView): boolean {
+  if (view === 'chronology') return data.chronology.some((row) => row.dataSource === 'real')
+  if (view === 'entities') return data.entities.some((row) => row.dataSource === 'real')
+  if (view === 'people') return data.people.some((row) => row.dataSource === 'real')
+  return false
+}
+
+function listRowsUnavailableText(label: string) {
+  return `No real ${label.toLowerCase()} rows available yet.`
+}
+
+function EmptyListState({ label }: { label: string }) {
+  return (
+    <div className="px-6 py-10 text-[13px] text-[var(--ink-3)]">
+      <div className="font-medium text-[var(--ink-2)]">{listRowsUnavailableText(label)}</div>
+      <div className="mt-1 text-[12px]">Backend register data is unavailable for this review route.</div>
+    </div>
+  )
 }
 
 function formatChronologyDisplayDate(row: ChronologyClaim): { text: string; placeholder: boolean } {
@@ -578,15 +599,18 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
   const isListArtifact = artifact?.kind === 'list'
   const loadedCount =
     isListArtifact && isListArtifactId(activeTab) ? loadedListCount(data, activeTab) : 0
-  const runTotal = isListArtifact ? (artifact?.count ?? 0) : 0
+  const reviewRoute = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
+  const docSource = data.isRealData ? 'real' : reviewRoute ? 'unavailable' : 'mock'
   const activeListSource =
-    isListArtifact && activeTab === 'chronology' && data.chronology.some((row) => row.dataSource === 'real')
+    isListArtifact && hasRealListRows(data, activeTab)
       ? 'real'
-      : isListArtifact && activeTab === 'entities' && data.entities.some((row) => row.dataSource === 'real')
-        ? 'real'
-        : isListArtifact && activeTab === 'people' && data.people.some((row) => row.dataSource === 'real')
-          ? 'real'
-          : 'mock'
+      : isListArtifact && reviewRoute
+        ? 'unavailable'
+        : 'mock'
+  const listSummaryText =
+    activeListSource === 'real'
+      ? `Showing ${loadedCount.toLocaleString()} real row${loadedCount === 1 ? '' : 's'} · agreement ${(artifact?.agreement ?? 0).toFixed(2)} · gate ${artifact?.gate ?? 0.85}`
+      : `${listRowsUnavailableText(formatViewLabel(activeTab))} Backend list unavailable.`
   const externalSourceCounts = data.augmentation.externalSourcesBySource
   const externalSourceCount = (key: string) =>
     Object.prototype.hasOwnProperty.call(externalSourceCounts, key) ? externalSourceCounts[key] : null
@@ -684,11 +708,11 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
             onClick={() => nav?.go('monitor')}
           >
             <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--accent)] shadow-[0_0_0_4px_var(--accent-soft)]" />
-            Atrium · output review
+            Legal AI · operator review
           </div>
-          <div className="min-w-0 truncate text-[13px] text-[var(--ink-3)]">
+          <div className="min-w-0 break-words text-[13px] leading-snug text-[var(--ink-3)]" title={data.doc.title}>
             Workspace · Royal Commission · <b className="font-medium text-[var(--ink)]">{data.doc.title}</b>
-            <SourceDot source={data.isRealData ? 'real' : 'mock'} show={showSources} />
+            <SourceDot source={docSource} show={showSources} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-[12.5px] text-[var(--ink-2)]">
@@ -722,12 +746,12 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
             Graph →
           </button>
           <span className="inline-flex items-center gap-2 rounded-full border border-[var(--rule)] bg-[var(--panel)] px-3 py-1">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--good)]" />
-            Workflow healthy
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ink-4)]" />
+            {reviewRoute ? (data.pipeline ? 'Workflow telemetry loaded' : 'Workflow status unavailable') : 'Workflow healthy'}
           </span>
           <span className="inline-flex items-center gap-2 rounded-full border border-[var(--rule)] bg-[var(--panel)] px-3 py-1">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--warn)]" />
-            {data.kpi.openConflicts} conflicts pending
+            {data.kpi.openConflictsSource === 'real' ? `${data.kpi.openConflicts} conflicts pending` : 'conflicts unavailable'}
           </span>
           <span className="font-mono text-[12px] text-[var(--ink-3)]">{data.doc.id}</span>
         </div>
@@ -737,16 +761,25 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
         <div className="flex flex-col gap-4">
           <div className="rounded-[14px] border border-[var(--rule)] bg-[var(--panel)] p-5 shadow-[0_1px_0_var(--rule-soft)]">
             <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--ink-3)]">Document</div>
-            <div className="mt-2 font-serif text-[22px] font-medium leading-tight text-[var(--ink)]">{data.doc.title}</div>
+            <div className="mt-2 break-words font-serif text-[22px] font-medium leading-tight text-[var(--ink)]" title={data.doc.title}>
+              {data.doc.title}
+            </div>
             <dl className="mt-4 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-[12px] text-[var(--ink-2)]">
               <dt className="text-[var(--ink-3)]">Pages</dt>
-              <dd className="font-mono text-[var(--ink)]">{data.doc.pages.toLocaleString()}<SourceDot source={data.isRealData ? 'real' : 'mock'} show={showSources} /></dd>
+              <dd className="font-mono text-[var(--ink)]">{data.doc.pages.toLocaleString()}<SourceDot source={docSource} show={showSources} /></dd>
               <dt className="text-[var(--ink-3)]">Type</dt>
-              <dd className="font-mono text-[var(--ink)]">{data.doc.docType}</dd>
+              <dd className="break-words font-mono text-[var(--ink)]">{data.doc.docType}</dd>
               <dt className="text-[var(--ink-3)]">Ingested</dt>
-              <dd className="font-mono text-[var(--ink)]">{data.doc.ingestedAt}<SourceDot source={data.isRealData ? 'real' : 'mock'} show={showSources} /></dd>
+              <dd className="break-words font-mono text-[var(--ink)]">{data.doc.ingestedAt}<SourceDot source={docSource} show={showSources} /></dd>
             </dl>
           </div>
+          {reviewRoute && (
+            <div className="rounded-[14px] border border-[var(--rule)] bg-[var(--panel)] px-5 py-4 shadow-[0_1px_0_var(--rule-soft)]">
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Document management</div>
+              <ReviewDocumentControls />
+            </div>
+          )}
+          {!reviewRoute && (
           <div className="rounded-[14px] border border-[var(--rule)] bg-[var(--panel)] px-5 py-4 shadow-[0_1px_0_var(--rule-soft)]">
             <div className="mb-2 flex items-baseline justify-between">
               <div className="font-mono text-[18px] font-semibold text-[var(--ink)]">{data.doc.elapsedHours.toFixed(1)}h</div>
@@ -759,6 +792,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
               />
             </div>
           </div>
+          )}
           <div className="rounded-[14px] border border-[var(--rule)] bg-[var(--panel)] px-5 py-4 shadow-[0_1px_0_var(--rule-soft)]">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Pipelines</div>
             <div className="mt-3 space-y-3">
@@ -785,6 +819,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                 </div>
                 )
               })}
+              {data.pipelines.length === 0 && (
+                <div className="text-[12px] text-[var(--ink-3)]">Pipeline telemetry unavailable.</div>
+              )}
             </div>
           </div>
         </div>
@@ -812,9 +849,9 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                 {tab.label}
                 {tab.countKey === 'count' && (
                   <span className="ml-2 rounded-full bg-[var(--rule-soft)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--ink-3)]">
-                    {findArtifact(data.artifacts, tab.id)?.count ?? (isListArtifactId(tab.id) ? loadedListCount(data, tab.id) : 0)}
+                    {isListArtifactId(tab.id) ? loadedListCount(data, tab.id) : findArtifact(data.artifacts, tab.id)?.count ?? 0}
                     <SourceDot
-                      source={data.isRealData ? 'real' : 'mock'}
+                      source={isListArtifactId(tab.id) && hasRealListRows(data, tab.id) ? 'real' : reviewRoute ? 'unavailable' : 'mock'}
                       show={showSources}
                     />
                   </span>
@@ -849,7 +886,7 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
                 </div>
                 <div className="mt-1 text-[12.5px] text-[var(--ink-2)]">
                   {isListArtifact
-                    ? `Showing ${loadedCount.toLocaleString()} sample claim${loadedCount === 1 ? '' : 's'} · Full run: ${runTotal.toLocaleString()} · agreement ${(artifact?.agreement ?? 0).toFixed(2)} · gate ${artifact?.gate ?? 0.85}`
+                    ? listSummaryText
                     : `Reviewing ${artifact?.sections ?? 0} sections · ${artifact?.drafted ?? 0} drafted · ${artifact?.critiqued ?? 0} in critic loop · ${(artifact?.sections ?? 0) - (artifact?.drafted ?? 0) - (artifact?.critiqued ?? 0)} queued`}
                   <SourceDot source={activeListSource} show={showSources} />
                 </div>
@@ -924,10 +961,20 @@ export function AtriumDashboard({ data, view, initialTab = 'chronology' }: Atriu
           </div>
 
           {activeTab === 'chronology' && (
-            <ChronologyTimeline rows={filteredChronology} highlight={highlight} showFieldIds={showFieldIds} onClaimClick={setSelectedClaim} />
+            filteredChronology.length > 0
+              ? <ChronologyTimeline rows={filteredChronology} highlight={highlight} showFieldIds={showFieldIds} onClaimClick={setSelectedClaim} />
+              : <EmptyListState label="Chronology" />
           )}
-          {activeTab === 'entities' && <EntityList rows={filteredEntities} highlight={highlight} showFieldIds={showFieldIds} />}
-          {activeTab === 'people' && <PeopleList rows={filteredPeople} highlight={highlight} showFieldIds={showFieldIds} />}
+          {activeTab === 'entities' && (
+            filteredEntities.length > 0
+              ? <EntityList rows={filteredEntities} highlight={highlight} showFieldIds={showFieldIds} />
+              : <EmptyListState label="Entity register" />
+          )}
+          {activeTab === 'people' && (
+            filteredPeople.length > 0
+              ? <PeopleList rows={filteredPeople} highlight={highlight} showFieldIds={showFieldIds} />
+              : <EmptyListState label="People register" />
+          )}
           {activeTab === 'exec' && (
             data.summary ? <SummaryPanel summary={data.summary} variant="compact" /> : <ReportView sections={data.reports.exec} reasoningLookup={reasoningLookup} />
           )}

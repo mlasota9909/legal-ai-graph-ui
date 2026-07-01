@@ -3,6 +3,7 @@ import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksL
 import { useNav } from '../../context/NavContext'
 import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
 import { SourceDot } from '../shared/SourceDot'
+import { ReviewDocumentControls } from '../shared/ReviewDocumentControls'
 import { parseDataSource } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
@@ -39,6 +40,13 @@ function sourceCountKind(value: number | null): DataSource {
 function reviewHref(docId: string, view?: 'chronology' | 'evidence' | 'ask'): string {
   const base = `/runs/${encodeURIComponent(docId)}`
   return view ? `${base}/${view}` : base
+}
+
+function hasRealListRows(data: WorkspaceData, artifactId: ArtifactSummary['id']): boolean {
+  if (artifactId === 'chronology') return data.chronology.some((row) => row.dataSource === 'real')
+  if (artifactId === 'entities') return data.entities.some((row) => row.dataSource === 'real')
+  if (artifactId === 'people') return data.people.some((row) => row.dataSource === 'real')
+  return false
 }
 
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
@@ -115,7 +123,8 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
       <button
         type="button"
         onClick={() => setOpen((next) => !next)}
-        className="max-w-full truncate text-left text-[13px] font-semibold text-[var(--ink)] hover:text-[var(--accent)]"
+        title={title}
+        className="max-w-full break-words text-left text-[13px] font-semibold leading-snug text-[var(--ink)] hover:text-[var(--accent)]"
       >
         Currently showing: {title} ▼
       </button>
@@ -139,7 +148,7 @@ function DocumentPicker({ activeId, title }: { activeId: string; title: string }
                 }`}
               >
                 <div className="min-w-0">
-                  <span className="block truncate text-[12px] font-medium text-[var(--ink)]">
+                  <span className="block break-words text-[12px] font-medium leading-snug text-[var(--ink)]" title={pack.name ?? pack.pack_id}>
                     {pack.name ?? pack.pack_id}
                   </span>
                   <span className="font-mono text-[10.5px] text-[var(--ink-3)]">
@@ -371,7 +380,8 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
   const unresolvedUpload = data.doc.docType === 'unresolved upload'
   const loadedCount = isListArtifactId(artifact.id) ? loadedListCount(data, artifact.id) : 0
   const runTotal = artifact.count ?? artifact.sections ?? 0
-  const meterTotal = isReport ? runTotal : loadedCount || runTotal
+  const displayTotal = isReport ? runTotal : loadedCount
+  const meterTotal = isReport ? runTotal : displayTotal
   const safeMeterTotal = Math.max(1, meterTotal)
   const accepted = artifact.accepted ?? 0
   const disputed = artifact.disputed ?? 0
@@ -379,7 +389,7 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
   const hasRealArtifactRows = isReport ? (artifact.sections ?? 0) > 0 : loadedCount > 0
   const artifactSource = unresolvedUpload || (reviewRoute && !hasRealArtifactRows)
     ? 'unavailable'
-    : artifact.id === 'people' && data.people.some((row) => row.dataSource === 'real')
+    : hasRealListRows(data, artifact.id)
       ? 'real'
       : 'mock'
   const artifactUnavailable = artifactSource === 'unavailable'
@@ -545,7 +555,7 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
       >
         <span>{artifactUnavailable ? 'backend data unavailable' : `updated ${artifact.lastUpdate}`}</span>
         <span className="cursor-pointer font-semibold text-[var(--accent)] hover:underline">
-          {artifactUnavailable ? 'Open' : `View all ${runTotal.toLocaleString()} →`}
+          {artifactUnavailable ? 'Open' : `View all ${displayTotal.toLocaleString()} →`}
         </span>
       </div>
     </div>
@@ -635,11 +645,16 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
         <div className="flex min-w-[220px] flex-1 flex-col justify-center border-r border-[var(--rule)] px-4 py-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Active run</div>
           <DocumentPicker activeId={data.doc.id} title={data.doc.title} />
-          <div className="font-mono text-[11px] text-[var(--ink-3)]">
+          <div className="break-words font-mono text-[11px] leading-snug text-[var(--ink-3)]" title={`${data.doc.id} · ${data.doc.pages.toLocaleString()}pp · ${data.doc.docType}`}>
             {data.doc.id} · {data.doc.pages.toLocaleString()}pp · {data.doc.docType.toLowerCase().replace(/_/g, ' ')}
             <SourceDot source={docSource} show={showSources} /> ·{' '}
             {data.doc.jurisdiction}
           </div>
+          {reviewRoute && (
+            <div className="mt-2">
+              <ReviewDocumentControls />
+            </div>
+          )}
         </div>
         {!reviewRoute && (
           <KpiCell

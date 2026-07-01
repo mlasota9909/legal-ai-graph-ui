@@ -107,7 +107,7 @@ export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
             Recommendations ({summary.recommendations.length})
           </h3>
           <div className="space-y-3">
-            {summary.recommendations.slice(0, 5).map((rec, i) => (
+            {summary.recommendations.map((rec, i) => (
               <div key={i} className="text-[13px] text-[var(--ink)] leading-relaxed border-l-2 border-[var(--accent)] pl-3">
                 {rec.rec_text}
                 {rec.rec_page != null && (
@@ -115,9 +115,6 @@ export function SummaryPanel({ summary, variant = 'full' }: SummaryPanelProps) {
                 )}
               </div>
             ))}
-            {summary.recommendations.length > 5 && (
-              <p className="text-[11px] text-[var(--ink-3)]">+ {summary.recommendations.length - 5} more recommendations</p>
-            )}
           </div>
         </div>
       )}

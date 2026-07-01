@@ -597,10 +597,143 @@ test('atrium list artifact source badge follows real active rows', async ({ page
   await page.locator('button', { hasText: 'Sources' }).first().click()
 
   const listHeader = page
-    .locator('div', { hasText: /Showing .*Full run:/ })
+    .locator('div', { hasText: /Showing .*real rows?/ })
     .filter({ has: page.locator('[title="real data"]') })
     .first()
   await expect(listHeader).toBeVisible({ timeout: 10000 })
+})
+
+test('review chronology sample wording is removed and full real rows reconcile with dashboard', async ({ page }) => {
+  const docId = 'hopper'
+  const rows = Array.from({ length: 80 }, (_, idx) => ({
+    id: `event-${idx + 1}`,
+    type: 'events',
+    entity: {
+      canonical_name: `Real chronology event ${idx + 1}`,
+      event_date: `2026-01-${String((idx % 28) + 1).padStart(2, '0')}`,
+    },
+    provenance: [{ chunk_id: `chunk-${idx + 1}`, page_start: idx + 1 }],
+    salience_score: 0.9,
+  }))
+  const statusDoc = {
+    document_id: docId,
+    label: 'Hopper full register test document',
+    data_source: 'real',
+    graph_namespace: 'hopper_ns',
+    page_count: 71,
+    pipeline_stage: 'completed',
+    upload_ts: '2026-07-01T05:50:26.199927+00:00',
+    chronology_event_count: 80,
+    people_mentioned_count: 0,
+    graph_counts: { entities_total: 0, claims_total: 80, data_source: 'real' },
+  }
+
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data_source: 'real', documents: [statusDoc] }),
+    })
+  })
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(statusDoc) })
+  })
+  await page.route(`**/api/registers/${docId}**`, async (route) => {
+    const url = new URL(route.request().url())
+    const type = url.searchParams.get('type')
+    const registerRows = type === 'events' ? rows : []
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: docId,
+        namespace: 'hopper_ns',
+        type,
+        total: registerRows.length,
+        data_source: 'real',
+        rows: registerRows,
+      }),
+    })
+  })
+  await page.route(`**/api/docs/${docId}/activity`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', document_id: docId, events: [] }) })
+  })
+  await page.route(`**/api/docs/${docId}/summary`, async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+  })
+  await page.route(`**/api/docs/${docId}/pipeline`, async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+  })
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', hosts: [] }) })
+  })
+  await page.route('**/api/packs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', packs: [] }) })
+  })
+
+  await page.goto(`/runs/${docId}`)
+  await expect(page.getByText('80 accepted').first()).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+  await expect(page.getByText('Upload document unavailable').first()).toBeVisible()
+  await expect(page.getByText('Archive/Delete unavailable').first()).toBeVisible()
+
+  await page.goto(`/runs/${docId}/chronology`)
+  await expect(page.getByText('Showing 80 real rows').first()).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('button', { hasText: /All\s+80/ }).first()).toBeVisible()
+  await expect(page.getByText('Real chronology event 80')).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('sample claims')
+  await expect(page.locator('body')).not.toContainText('Full run')
+  await expect(page.locator('body')).not.toContainText(/DUMMY DATA/i)
+})
+
+test('review chronology status-only totals do not render unavailable backend rows as real data', async ({ page }) => {
+  const docId = 'hopper'
+  const statusDoc = {
+    document_id: docId,
+    label: 'Hopper unavailable register test document',
+    data_source: 'real',
+    graph_namespace: 'hopper_ns',
+    page_count: 71,
+    pipeline_stage: 'completed',
+    upload_ts: '2026-07-01T05:50:26.199927+00:00',
+    chronology_event_count: 80,
+    people_mentioned_count: 0,
+    graph_counts: { entities_total: 0, claims_total: 80, data_source: 'real' },
+  }
+
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data_source: 'real', documents: [statusDoc] }),
+    })
+  })
+  await page.route(`**/api/status/${docId}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(statusDoc) })
+  })
+  await page.route(`**/api/registers/${docId}**`, async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'register_not_found' }) })
+  })
+  for (const suffix of ['activity', 'summary', 'pipeline']) {
+    await page.route(`**/api/docs/${docId}/${suffix}`, async (route) => {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: `${suffix}_not_found` }) })
+    })
+  }
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', hosts: [] }) })
+  })
+  await page.route('**/api/packs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', packs: [] }) })
+  })
+
+  await page.goto(`/runs/${docId}/chronology`)
+  await expect(page.getByText('No real chronology rows available yet.').first()).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('button', { hasText: /All\s+0/ }).first()).toBeVisible()
+  await expect(page.getByText('Upload document unavailable').first()).toBeVisible()
+  await expect(page.getByText('Archive/Delete unavailable').first()).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('80 accepted')
+  await expect(page.locator('body')).not.toContainText('sample claims')
+  await expect(page.locator('body')).not.toContainText('Full run')
 })
 
 test('atrium augmentation provider rows do not invent omitted source counts', async ({ page }) => {

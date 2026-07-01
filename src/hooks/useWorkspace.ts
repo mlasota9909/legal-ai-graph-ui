@@ -19,6 +19,12 @@ import type {
 import type { ListStatusFilter } from '../types/listFilter'
 import { parseOptionalDataSource } from '../utils/dataSource'
 import type { DataSource } from '../utils/dataSource'
+import {
+  chronologyListStatus,
+  countByStatus,
+  entityListStatus,
+  personListStatus,
+} from '../utils/listStatus'
 
 const VIEW_SEGMENTS: Record<string, ArtifactView> = {
   monitor: 'monitor',
@@ -165,7 +171,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T
 }
 
-async function fetchRegister(docId: string, type: RegisterType, limit = 500): Promise<RegisterResponse> {
+async function fetchRegister(docId: string, type: RegisterType, limit = 5000): Promise<RegisterResponse> {
   return fetchJson<RegisterResponse>(
     `/api/registers/${encodeURIComponent(docId)}?type=${type}&limit=${limit}`
   )
@@ -228,7 +234,12 @@ function markUnresolvedUploadId(prev: WorkspaceData, docId: string): WorkspaceDa
   }
 }
 
-function applyStatus(prev: WorkspaceData, status: StatusDocument, routeDocId = status.document_id || prev.doc.id): WorkspaceData {
+function applyStatus(
+  prev: WorkspaceData,
+  status: StatusDocument,
+  routeDocId = status.document_id || prev.doc.id,
+  reviewMode = false
+): WorkspaceData {
   const chunksDone = status.chunks_completed
   const chunksTotal = status.total_chunks
   const hasOcrProgress = chunksDone != null && chunksTotal != null && chunksTotal > 0
@@ -297,25 +308,25 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument, routeDocId = s
     },
     agreement: {
       ...prev.agreement,
-      chronology: chronologyCount != null || hasJaccardMetric
+      chronology: (!reviewMode && chronologyCount != null) || hasJaccardMetric
         ? {
-            ...(chronologyCount != null
+            ...(!reviewMode && chronologyCount != null
               ? { ...prev.agreement.chronology, claims: chronologyCount, accepted: chronologyCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.chronology),
             ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
           }
         : prev.agreement.chronology,
-      person: individualsCount != null || hasJaccardMetric
+      person: (!reviewMode && individualsCount != null) || hasJaccardMetric
         ? {
-            ...(individualsCount != null
+            ...(!reviewMode && individualsCount != null
               ? { ...prev.agreement.person, claims: individualsCount, accepted: individualsCount, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.person),
             ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
           }
         : prev.agreement.person,
-      entity: entitiesTotal != null || hasJaccardMetric
+      entity: (!reviewMode && entitiesTotal != null) || hasJaccardMetric
         ? {
-            ...(entitiesTotal != null
+            ...(!reviewMode && entitiesTotal != null
               ? { ...prev.agreement.entity, claims: entitiesTotal, accepted: entitiesTotal, disputed: 0, claimsSource: 'real' as const }
               : prev.agreement.entity),
             ...(hasJaccardMetric ? { jaccard: metrics?.jaccard ?? null, jaccardSource: jaccardSource ?? 'unavailable' as const } : {}),
@@ -329,6 +340,9 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument, routeDocId = s
       externalSourcesBySource: gc?.external_sources_by_source ?? {},
     },
     artifacts: prev.artifacts.map((artifact) => {
+      if (reviewMode && artifact.kind === 'list') {
+        return artifact
+      }
       if (artifact.id === 'chronology' && chronologyCount != null) {
         return { ...artifact, count: chronologyCount, accepted: chronologyCount, disputed: 0, superseded: 0 }
       }
@@ -337,6 +351,66 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument, routeDocId = s
       }
       if (artifact.id === 'entities' && entitiesTotal != null) {
         return { ...artifact, count: entitiesTotal, accepted: entitiesTotal, disputed: 0, superseded: 0 }
+      }
+      return artifact
+    }),
+  }
+}
+
+function applyLoadedListCounts(data: WorkspaceData): WorkspaceData {
+  const chronology = countByStatus(data.chronology, chronologyListStatus)
+  const entities = countByStatus(data.entities, entityListStatus)
+  const people = countByStatus(data.people, personListStatus)
+
+  const updateAgreement = (
+    current: WorkspaceData['agreement']['chronology'],
+    counts: typeof chronology
+  ): WorkspaceData['agreement']['chronology'] => ({
+    ...current,
+    claims: counts.all,
+    accepted: counts.accepted,
+    disputed: counts.disputed,
+    superseded: counts.superseded,
+    claimsSource: counts.all > 0 ? 'real' : 'unavailable',
+  })
+
+  return {
+    ...data,
+    agreement: {
+      chronology: updateAgreement(data.agreement.chronology, chronology),
+      entity: updateAgreement(data.agreement.entity, entities),
+      person: updateAgreement(data.agreement.person, people),
+    },
+    artifacts: data.artifacts.map((artifact) => {
+      if (artifact.id === 'chronology') {
+        return {
+          ...artifact,
+          count: chronology.all,
+          accepted: chronology.accepted,
+          disputed: chronology.disputed,
+          superseded: chronology.superseded,
+          agreement: chronology.all > 0 ? artifact.agreement : null,
+        }
+      }
+      if (artifact.id === 'entities') {
+        return {
+          ...artifact,
+          count: entities.all,
+          accepted: entities.accepted,
+          disputed: entities.disputed,
+          superseded: entities.superseded,
+          agreement: entities.all > 0 ? artifact.agreement : null,
+        }
+      }
+      if (artifact.id === 'people') {
+        return {
+          ...artifact,
+          count: people.all,
+          accepted: people.accepted,
+          disputed: people.disputed,
+          superseded: people.superseded,
+          agreement: people.all > 0 ? artifact.agreement : null,
+        }
       }
       return artifact
     }),
@@ -505,6 +579,7 @@ function buildInitialWorkspaceData(docId: string, reviewMode: boolean): Workspac
 export interface WorkspaceState {
   docId: string
   backendDocId: string
+  graphDocId: string
   namespace: string | null
   view: ArtifactView
   highlight: string | null
@@ -532,6 +607,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   const [listFilter, setListFilter] = useState<ListStatusFilter>('all')
   const [showSources, setShowSources] = useState(false)
   const [data, setData] = useState<WorkspaceData>(() => buildInitialWorkspaceData(initialRoute.docId, reviewMode))
+  const graphDocId = reviewMode && docId !== backendDocId ? docId : backendDocId
   const [streaming] = useState<{ connected: boolean; events: ActivityEvent[] }>({
     connected: false,
     events: [],
@@ -606,12 +682,12 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
         if (cancelled || !isRecord(status)) return
         const routeDocId = canonicalRouteIdFromStatus(status, status.document_id || docId)
         if (routeDocId !== docId) setDocId(routeDocId)
-        setData((prev) => applyStatus(prev, status, routeDocId))
-        setNamespace(
+        setData((prev) => applyStatus(prev, status, routeDocId, reviewMode))
+        const statusNamespace =
           typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
             ? status.graph_namespace
             : null
-        )
+        setNamespace((prev) => statusNamespace ?? (reviewMode ? prev : null))
       } catch (error) {
         if (cancelled) return
         if (error instanceof Error && error.message.startsWith('404 ')) {
@@ -623,12 +699,12 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
               const routeDocId = canonicalRouteIdFromStatus(status, status.document_id || docId)
               setBackendDocId(status.document_id)
               if (routeDocId !== docId) setDocId(routeDocId)
-              setData((prev) => applyStatus(prev, status, routeDocId))
-              setNamespace(
+              setData((prev) => applyStatus(prev, status, routeDocId, reviewMode))
+              const statusNamespace =
                 typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
                   ? status.graph_namespace
                   : null
-              )
+              setNamespace((prev) => statusNamespace ?? (reviewMode ? prev : null))
               return
             }
             const canonicalStatus = resolveStatusDocument(backendDocId, statusList.documents ?? [])
@@ -660,63 +736,86 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     let cancelled = false
 
     const loadRegisters = async () => {
-      const fetchType = async (type: RegisterType) => {
+      const fetchType = async (targetDocId: string, type: RegisterType) => {
         try {
-          return await fetchRegister(backendDocId, type)
+          return await fetchRegister(targetDocId, type)
         } catch {
           return null
         }
       }
 
-      const [peopleRes, eventsRes, legislationRes, authorityRes, orgRes, docRes] = await Promise.all([
-        fetchType('people'),
-        fetchType('events'),
-        fetchType('legislation'),
-        fetchType('authority'),
-        fetchType('organisation'),
-        fetchType('document'),
-      ])
+      const fetchRegisterSet = (targetDocId: string) =>
+        Promise.all([
+          fetchType(targetDocId, 'people'),
+          fetchType(targetDocId, 'events'),
+          fetchType(targetDocId, 'legislation'),
+          fetchType(targetDocId, 'authority'),
+          fetchType(targetDocId, 'organisation'),
+          fetchType(targetDocId, 'document'),
+        ])
+
+      let [peopleRes, eventsRes, legislationRes, authorityRes, orgRes, docRes] =
+        await fetchRegisterSet(graphDocId)
+
+      const loadedRows =
+        (peopleRes?.rows.length ?? 0) +
+        (eventsRes?.rows.length ?? 0) +
+        (legislationRes?.rows.length ?? 0) +
+        (authorityRes?.rows.length ?? 0) +
+        (orgRes?.rows.length ?? 0) +
+        (docRes?.rows.length ?? 0)
+
+      if (reviewMode && loadedRows === 0 && graphDocId !== backendDocId) {
+        ;[peopleRes, eventsRes, legislationRes, authorityRes, orgRes, docRes] =
+          await fetchRegisterSet(backendDocId)
+      }
 
       if (cancelled) return
 
-      if (peopleRes) {
-        setData((prev) => ({
-          ...prev,
-          people: peopleRes.rows.map(registerPersonToRow),
-        }))
+      const registerNamespace =
+        peopleRes?.namespace ??
+        eventsRes?.namespace ??
+        legislationRes?.namespace ??
+        authorityRes?.namespace ??
+        orgRes?.namespace ??
+        docRes?.namespace ??
+        null
+      if (registerNamespace) {
+        setNamespace(registerNamespace)
       }
 
-      if (eventsRes) {
-        setData((prev) => ({
-          ...prev,
-          chronology: eventsRes.rows.map(registerEventToChronology),
-        }))
-      }
-
-      if (legislationRes || authorityRes || orgRes || docRes) {
-        const combined = [
+      setData((prev) => {
+        const combinedEntities = [
           ...(legislationRes?.rows ?? []),
           ...(authorityRes?.rows ?? []),
           ...(orgRes?.rows ?? []),
           ...(docRes?.rows ?? []),
         ]
-        setData((prev) => ({
+        const next = {
           ...prev,
-          entities: combined.map(registerEntityToRow),
-        }))
-      }
+          people: peopleRes ? peopleRes.rows.map(registerPersonToRow) : reviewMode ? [] : prev.people,
+          chronology: eventsRes ? eventsRes.rows.map(registerEventToChronology) : reviewMode ? [] : prev.chronology,
+          entities:
+            legislationRes || authorityRes || orgRes || docRes
+              ? combinedEntities.map(registerEntityToRow)
+              : reviewMode
+                ? []
+                : prev.entities,
+        }
+        return reviewMode ? applyLoadedListCounts(next) : next
+      })
     }
 
     void loadRegisters()
     return () => {
       cancelled = true
     }
-  }, [backendDocId])
+  }, [backendDocId, docId, graphDocId, reviewMode])
 
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = backendDocId
+    const currentDocId = graphDocId
     setData((prev) => ({ ...prev, activity: [] }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/activity`, { headers, signal: controller.signal })
@@ -733,13 +832,13 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [backendDocId])
+  }, [graphDocId])
 
   useEffect(() => {
-    if (!backendDocId) return
+    if (!graphDocId) return
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = backendDocId
+    const currentDocId = graphDocId
     setData((prev) => ({ ...prev, summary: null }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/summary`, { headers, signal: controller.signal })
@@ -763,13 +862,13 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [backendDocId])
+  }, [graphDocId])
 
   useEffect(() => {
-    if (!backendDocId) return
+    if (!graphDocId) return
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = backendDocId
+    const currentDocId = graphDocId
     setData((prev) => ({ ...prev, pipeline: null }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/pipeline`, { headers, signal: controller.signal })
@@ -791,7 +890,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [backendDocId])
+  }, [graphDocId])
 
   useEffect(() => {
     const headers = authHeaders()
@@ -813,6 +912,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     () => ({
       docId,
       backendDocId,
+      graphDocId,
       namespace,
       view,
       highlight,
@@ -825,6 +925,6 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       data,
       streaming,
     }),
-    [docId, backendDocId, namespace, view, highlight, listFilter, showSources, setListFilter, go, selectRun, toggleSources, data, streaming]
+    [docId, backendDocId, graphDocId, namespace, view, highlight, listFilter, showSources, setListFilter, go, selectRun, toggleSources, data, streaming]
   )
 }

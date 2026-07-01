@@ -17,14 +17,14 @@ function AppRoutes() {
       <LatticeDashboard data={workspace.data} />
     ) : workspace.view === 'evidence' ? (
       <EvidencePanel
-        docId={workspace.backendDocId}
+        docId={workspace.graphDocId}
         namespace={workspace.namespace}
         claimId={workspace.highlight}
         onBack={() => workspace.go('monitor')}
       />
     ) : workspace.view === 'ask' ? (
       <AskPanel
-        docId={workspace.backendDocId}
+        docId={workspace.graphDocId}
         namespace={workspace.namespace}
         onBack={() => workspace.go('monitor')}
         onGoEvidence={(nodeId) => workspace.go('evidence', nodeId)}
