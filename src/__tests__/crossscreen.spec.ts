@@ -1044,7 +1044,7 @@ test('EvidencePanel renders unknown graph source state without mock badge', asyn
     timeout: 10000,
   })
   await expect(page.getByText('unknown source state')).toBeVisible()
-  await expect(page.locator('[title="unknown source state"]')).toBeVisible()
+  await expect(page.locator('header [title="unknown source state"]')).toBeVisible()
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 })
 
@@ -1983,8 +1983,8 @@ test('AskPanel renders unknown source state for future data_source values', asyn
   await expect(submitButton).toBeEnabled({ timeout: 5000 })
   await submitButton.click()
 
-  await expect(page.getByText('unknown source state')).toBeVisible({ timeout: 10000 })
-  await expect(page.locator('[title="unknown source state"]')).toBeVisible()
+  await expect(page.locator('header').getByText('unknown source state')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('header [title="unknown source state"]')).toBeVisible()
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
 })
 
