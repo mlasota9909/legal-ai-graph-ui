@@ -1326,6 +1326,90 @@ test('upload completion route resolves canonical document id from Core status li
   await expect(page.getByRole('link', { name: 'Ask' })).toHaveAttribute('href', `/runs/${docId}/ask`)
 })
 
+test('canonical Hopper route binds to live raw backend upload id without changing URL', async ({ page }) => {
+  const rawId = 'ui-original_hca_hopper_v_vic-20260701T054753Z-01'
+  await page.route('**/api/status/hopper', async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'status_not_found' } }),
+    })
+  })
+  await page.route('**/api/registers/hopper**', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+  })
+  for (const suffix of ['activity', 'summary', 'pipeline']) {
+    await page.route(`**/api/docs/hopper/${suffix}`, async (route) => {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+    })
+  }
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [
+          {
+            document_id: rawId,
+            label: 'original_hca_Hopper_v_Vic.pdf',
+            page_count: 71,
+            pipeline_stage: 'failed',
+            upload_ts: '2026-07-01T05:50:26.199927+00:00',
+            total_chunks: 0,
+            chunks_completed: 0,
+          },
+        ],
+      }),
+    })
+  })
+  await page.route(`**/api/status/${rawId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        document_id: rawId,
+        label: 'original_hca_Hopper_v_Vic.pdf',
+        page_count: 71,
+        pipeline_stage: 'failed',
+        upload_ts: '2026-07-01T05:50:26.199927+00:00',
+        total_chunks: 0,
+        chunks_completed: 0,
+      }),
+    })
+  })
+  await page.route(`**/api/registers/${rawId}**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', rows: [] }) })
+  })
+  await page.route(`**/api/docs/${rawId}/activity`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', document_id: rawId, events: [] }) })
+  })
+  await page.route(`**/api/docs/${rawId}/summary`, async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+  })
+  await page.route(`**/api/docs/${rawId}/pipeline`, async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not_found' }) })
+  })
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', hosts: [] }) })
+  })
+
+  await page.goto('/runs/hopper')
+
+  await expect(page).toHaveURL(/\/runs\/hopper$/)
+  await expect(page.getByRole('link', { name: 'Operator review' })).toHaveAttribute('href', '/runs/hopper')
+  await expect(page.getByRole('link', { name: 'Lawyer review' })).toHaveAttribute('href', '/runs/hopper/chronology')
+  await expect(page.getByRole('link', { name: 'Evidence graph' })).toHaveAttribute('href', '/runs/hopper/evidence')
+  await expect(page.getByRole('link', { name: 'Ask' })).toHaveAttribute('href', '/runs/hopper/ask')
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).toContain('original_hca_Hopper_v_Vic.pdf')
+  expect(bodyText).not.toContain('Smith Holdings')
+  expect(bodyText).not.toContain('SGLang cache')
+  expect(bodyText).not.toContain('Workflow')
+})
+
 test('unknown upload id stays unresolved without seeded review data', async ({ page }) => {
   const rawId = 'ui-original_unknown_matter-20260701T000000Z-01'
   await mockMissingReviewDocument(page, rawId)

@@ -202,6 +202,7 @@ function KpiCell({ label, value, delta, tone, source = 'mock' }: { label: string
 function AgreementColumn({ label, item, source = 'mock' }: { label: string; item: AgreementItem; source?: DataSource }) {
   const nav = useNav()
   const ok = item.jaccard != null && item.jaccard >= item.gate
+  const unavailable = source === 'unavailable' && item.jaccard == null && item.claims === 0
   return (
     <div data-source-label={`Agreement ${label}`} className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
@@ -214,7 +215,7 @@ function AgreementColumn({ label, item, source = 'mock' }: { label: string; item
             ok ? 'bg-[var(--good-soft)] text-[var(--good)]' : 'bg-[var(--warn-soft)] text-[var(--warn)]'
           }`}
         >
-          {ok ? '>= gate' : 'iter'}
+          {unavailable ? 'unavailable' : ok ? '>= gate' : 'iter'}
         </span>
       </div>
       <div className="relative mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
@@ -366,6 +367,7 @@ function ActivityLog({ data }: { data: WorkspaceData }) {
 function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: WorkspaceData }) {
   const nav = useNav()
   const isReport = artifact.kind === 'report'
+  const reviewRoute = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
   const unresolvedUpload = data.doc.docType === 'unresolved upload'
   const loadedCount = isListArtifactId(artifact.id) ? loadedListCount(data, artifact.id) : 0
   const runTotal = artifact.count ?? artifact.sections ?? 0
@@ -374,11 +376,13 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
   const accepted = artifact.accepted ?? 0
   const disputed = artifact.disputed ?? 0
   const superseded = artifact.superseded ?? 0
-  const artifactSource = unresolvedUpload
+  const hasRealArtifactRows = isReport ? (artifact.sections ?? 0) > 0 : loadedCount > 0
+  const artifactSource = unresolvedUpload || (reviewRoute && !hasRealArtifactRows)
     ? 'unavailable'
     : artifact.id === 'people' && data.people.some((row) => row.dataSource === 'real')
       ? 'real'
       : 'mock'
+  const artifactUnavailable = artifactSource === 'unavailable'
 
   const listItems = () => {
     if (artifact.id === 'chronology') {
@@ -429,18 +433,22 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
         </div>
         <span
           className={`rounded px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.04em] ${
-            artifact.status === 'drafting'
+            artifactUnavailable
+              ? 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+              : artifact.status === 'drafting'
               ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
               : artifact.status === 'gated'
                 ? 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
                 : 'bg-[var(--accent-soft)] text-[var(--accent)]'
           }`}
         >
-          {artifact.status}
+          {artifactUnavailable ? 'unavailable' : artifact.status}
         </span>
       </div>
       <div className="border-b border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2">
-        {isReport ? (
+        {artifactUnavailable ? (
+          <div className="font-mono text-[10.5px] text-[var(--ink-3)]">No real rows available yet.</div>
+        ) : isReport ? (
           <div className="flex items-baseline justify-between font-mono text-[10.5px] text-[var(--ink-3)]">
             <span>
               <b className="text-[15px] text-[var(--ink)]">{artifact.drafted}</b>/{artifact.sections} drafted
@@ -463,7 +471,7 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
             </div>
           </>
         )}
-        {!isReport && (
+        {!artifactUnavailable && !isReport && (
           <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-[var(--rule-soft)]">
             <div className="h-full bg-[var(--good)]" style={{ width: `${(accepted / safeMeterTotal) * 100}%` }} />
             <div className="h-full bg-[var(--warn)]" style={{ width: `${(disputed / safeMeterTotal) * 100}%` }} />
@@ -472,7 +480,9 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
         )}
       </div>
       <div className="flex flex-1 flex-col gap-2 px-3 py-2 text-[11px]">
-        {isReport && artifact.outline
+        {artifactUnavailable
+          ? <div className="text-[var(--ink-3)]">Backend data unavailable for this artifact.</div>
+          : isReport && artifact.outline
           ? artifact.outline.slice(0, 5).map((row) => (
               <div key={row.h} className="flex items-center justify-between gap-2 border-b border-dashed border-[var(--rule-soft)] pb-2 last:border-b-0">
                 <div className="min-w-0 truncate text-[var(--ink)]">{row.h}</div>
@@ -533,9 +543,9 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
           if (nav) nav.go(artifact.id, undefined, 'all')
         }}
       >
-        <span>updated {artifact.lastUpdate}</span>
+        <span>{artifactUnavailable ? 'backend data unavailable' : `updated ${artifact.lastUpdate}`}</span>
         <span className="cursor-pointer font-semibold text-[var(--accent)] hover:underline">
-          View all {runTotal.toLocaleString()} →
+          {artifactUnavailable ? 'Open' : `View all ${runTotal.toLocaleString()} →`}
         </span>
       </div>
     </div>
@@ -545,8 +555,12 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
 export function LatticeDashboard({ data }: LatticeDashboardProps) {
   const nav = useNav()
   const showSources = nav?.showSources ?? false
+  const reviewRoute = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
   const unresolvedUpload = data.doc.docType === 'unresolved upload'
   const docSource: DataSource = data.isRealData ? 'real' : unresolvedUpload ? 'unavailable' : 'mock'
+  const claimsSource = data.kpi.claimsTotalSource ?? 'unavailable'
+  const conflictsSource = data.kpi.openConflictsSource ?? 'unavailable'
+  const humanQueueSource = data.kpi.humanQueueSource ?? 'unavailable'
   const externalSourceCounts = data.augmentation.externalSourcesBySource
   const eyeciteCount = externalSourceCount(externalSourceCounts, 'eyecite')
   const austliiCount = externalSourceCount(externalSourceCounts, 'austlii')
@@ -627,16 +641,36 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
             {data.doc.jurisdiction}
           </div>
         </div>
+        {!reviewRoute && (
+          <KpiCell
+            label="Time"
+            value={`${data.doc.elapsedHours.toFixed(1)}h`}
+            delta={`of ${data.doc.timeBudgetHours}h · ${((data.doc.elapsedHours / data.doc.timeBudgetHours) * 100).toFixed(0)}%`}
+          />
+        )}
         <KpiCell
-          label="Time"
-          value={`${data.doc.elapsedHours.toFixed(1)}h`}
-          delta={`of ${data.doc.timeBudgetHours}h · ${((data.doc.elapsedHours / data.doc.timeBudgetHours) * 100).toFixed(0)}%`}
+          label="Claims"
+          value={claimsSource === 'real' ? data.kpi.claimsTotal.toLocaleString() : 'unavailable'}
+          source={claimsSource}
         />
-        <KpiCell label="Claims" value={data.kpi.claimsTotal.toLocaleString()} delta="+18 / min" source={data.kpi.claimsTotalSource ?? 'mock'} />
-        <KpiCell label="Conflicts" value={String(data.kpi.openConflicts)} tone="warn" delta="1 arbiter · 1 iterating" source={data.kpi.openConflictsSource ?? 'mock'} />
-        <KpiCell label="Human queue" value={String(data.kpi.humanQueue)} tone="warn" delta="2 person · 1 chrono" source={data.kpi.humanQueueSource ?? 'mock'} />
-        <KpiCell label="SGLang cache" value={`${Math.round(data.kpi.cacheHitRate * 100)}%`} tone="ok" delta="↑ vs 30% floor" source="simulated" />
-        <KpiCell label="Workflow" value="OK" tone="ok" delta="0 retries · Temporal" />
+        <KpiCell
+          label="Conflicts"
+          value={conflictsSource === 'real' ? String(data.kpi.openConflicts) : 'unavailable'}
+          tone="warn"
+          source={conflictsSource}
+        />
+        <KpiCell
+          label="Human queue"
+          value={humanQueueSource === 'real' ? String(data.kpi.humanQueue) : 'unavailable'}
+          tone="warn"
+          source={humanQueueSource}
+        />
+        {!reviewRoute && (
+          <>
+            <KpiCell label="SGLang cache" value={`${Math.round(data.kpi.cacheHitRate * 100)}%`} tone="ok" delta="↑ vs 30% floor" source="simulated" />
+            <KpiCell label="Workflow" value="OK" tone="ok" delta="0 retries · Temporal" />
+          </>
+        )}
       </div>
 
       <div className="space-y-5 px-6 py-5">
@@ -712,6 +746,7 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                 <AgreementColumn label="Entity" item={data.agreement.entity} source={data.agreement.entity.jaccardSource ?? data.agreement.entity.claimsSource ?? 'mock'} />
               </div>
             </div>
+            {!reviewRoute && (
             <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
               <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Time budget</h3>
@@ -732,6 +767,7 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                 <div className="font-mono text-[11px] text-[var(--ink-3)]">eta 8.6h</div>
               </div>
             </div>
+            )}
           </div>
         </div>
 
@@ -1009,7 +1045,11 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                       </div>
                     )
                   })
-                : data.hardware.hosts.map((host) => {
+                : reviewRoute ? (
+                  <div className="col-span-2 px-4 py-5 text-[11.5px] text-[var(--ink-3)]">
+                    Hardware telemetry unavailable from `/api/fleet`.
+                  </div>
+                ) : data.hardware.hosts.map((host) => {
                     const util = host.vramPct ?? host.ramPct ?? 0
                     const utilLabel = host.vramPct != null ? 'VRAM' : 'RAM'
                     return (

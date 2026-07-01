@@ -171,25 +171,34 @@ async function fetchRegister(docId: string, type: RegisterType, limit = 500): Pr
   )
 }
 
-function canonicalDocumentIdFromStatus(rawId: string, documents: StatusDocument[]): string | null {
-  const decoded = decodeURIComponent(rawId || '').toLowerCase()
-  const rawTokens = new Set(decoded.split(/[^a-z0-9]+/).filter(Boolean))
-  const candidates = documents
-    .map((doc) => doc.document_id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    .sort((a, b) => b.length - a.length)
+function tokensFrom(value: string | null | undefined): string[] {
+  return (value ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+}
 
-  for (const id of candidates) {
-    if (decoded === id.toLowerCase()) return id
-  }
+function meaningfulTokens(value: string | null | undefined): string[] {
+  const stop = new Set(['document', 'documents', 'hca', 'original', 'pdf', 'run', 'source', 'ui', 'upload', 'uploads', 'v', 'vic'])
+  return tokensFrom(value).filter((token) => token.length > 3 && !stop.has(token) && !/\d/.test(token))
+}
+
+function resolveStatusDocument(rawId: string, documents: StatusDocument[]): StatusDocument | null {
+  const requestedTokens = meaningfulTokens(decodeURIComponent(rawId || ''))
+  if (requestedTokens.length === 0) return null
+
+  const exact = documents.find((doc) => doc.document_id.toLowerCase() === rawId.toLowerCase())
+  if (exact) return exact
 
   // ponytail: temporary upload-id shim; remove when Core upload completion returns canonical document_id.
-  for (const id of candidates) {
-    const idTokens = id.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-    if (idTokens.length > 0 && idTokens.every((token) => rawTokens.has(token))) return id
-  }
+  return documents.find((doc) => {
+    const docTokens = meaningfulTokens(`${doc.document_id} ${doc.label ?? ''}`)
+    return requestedTokens.every((token) => docTokens.includes(token))
+  }) ?? null
+}
 
-  return null
+function canonicalRouteIdFromStatus(status: StatusDocument, fallback: string): string {
+  const tokens = tokensFrom(`${status.document_id} ${status.label ?? ''}`)
+  // ponytail: visual review alias for the live Hopper upload until Core persists canonical document_id.
+  if (tokens.includes('hopper')) return 'hopper'
+  return fallback
 }
 
 function markUnresolvedUploadId(prev: WorkspaceData, docId: string): WorkspaceData {
@@ -219,7 +228,7 @@ function markUnresolvedUploadId(prev: WorkspaceData, docId: string): WorkspaceDa
   }
 }
 
-function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData {
+function applyStatus(prev: WorkspaceData, status: StatusDocument, routeDocId = status.document_id || prev.doc.id): WorkspaceData {
   const chunksDone = status.chunks_completed
   const chunksTotal = status.total_chunks
   const hasOcrProgress = chunksDone != null && chunksTotal != null && chunksTotal > 0
@@ -272,7 +281,7 @@ function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData
     isRealData: true,
     doc: {
       ...prev.doc,
-      id: status.document_id || prev.doc.id,
+      id: routeDocId,
       title: status.label || prev.doc.title,
       pages: status.page_count ?? prev.doc.pages,
       docType: status.pipeline_stage ?? prev.doc.docType,
@@ -495,6 +504,7 @@ function buildInitialWorkspaceData(docId: string, reviewMode: boolean): Workspac
 
 export interface WorkspaceState {
   docId: string
+  backendDocId: string
   namespace: string | null
   view: ArtifactView
   highlight: string | null
@@ -515,6 +525,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   const initialRoute = parseRoute(defaultDocId)
   const reviewMode = isReviewRoute()
   const [docId, setDocId] = useState(initialRoute.docId)
+  const [backendDocId, setBackendDocId] = useState(initialRoute.docId)
   const [namespace, setNamespace] = useState<string | null>(null)
   const [view, setView] = useState<ArtifactView>(initialRoute.view)
   const [highlight, setHighlight] = useState<string | null>(null)
@@ -528,6 +539,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
 
   const selectRun = useCallback((documentId: string) => {
     setDocId(documentId)
+    setBackendDocId(documentId)
     setNamespace(null)
     setView('monitor')
     setHighlight(null)
@@ -569,6 +581,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     const onPop = () => {
       const next = parseRoute(defaultDocId)
       setDocId(next.docId)
+      setBackendDocId(next.docId)
       setNamespace(null)
       setView(next.view)
     }
@@ -589,9 +602,11 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
 
     const poll = async () => {
       try {
-        const status = await fetchJson<StatusDocument>(`/api/status/${encodeURIComponent(docId)}`)
+        const status = await fetchJson<StatusDocument>(`/api/status/${encodeURIComponent(backendDocId)}`)
         if (cancelled || !isRecord(status)) return
-        setData((prev) => applyStatus(prev, status))
+        const routeDocId = canonicalRouteIdFromStatus(status, status.document_id || docId)
+        if (routeDocId !== docId) setDocId(routeDocId)
+        setData((prev) => applyStatus(prev, status, routeDocId))
         setNamespace(
           typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
             ? status.graph_namespace
@@ -603,9 +618,22 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
           try {
             const statusList = await fetchJson<StatusListResponse>('/api/status?limit=200')
             if (cancelled) return
-            const canonicalDocId = canonicalDocumentIdFromStatus(docId, statusList.documents ?? [])
-            if (canonicalDocId && canonicalDocId !== docId) {
-              setDocId(canonicalDocId)
+            const status = resolveStatusDocument(docId, statusList.documents ?? [])
+            if (status) {
+              const routeDocId = canonicalRouteIdFromStatus(status, status.document_id || docId)
+              setBackendDocId(status.document_id)
+              if (routeDocId !== docId) setDocId(routeDocId)
+              setData((prev) => applyStatus(prev, status, routeDocId))
+              setNamespace(
+                typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
+                  ? status.graph_namespace
+                  : null
+              )
+              return
+            }
+            const canonicalStatus = resolveStatusDocument(backendDocId, statusList.documents ?? [])
+            if (canonicalStatus && canonicalStatus.document_id !== backendDocId) {
+              setBackendDocId(canonicalStatus.document_id)
               setNamespace(null)
               return
             }
@@ -626,7 +654,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [docId])
+  }, [docId, backendDocId])
 
   useEffect(() => {
     let cancelled = false
@@ -634,7 +662,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     const loadRegisters = async () => {
       const fetchType = async (type: RegisterType) => {
         try {
-          return await fetchRegister(docId, type)
+          return await fetchRegister(backendDocId, type)
         } catch {
           return null
         }
@@ -683,12 +711,12 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     return () => {
       cancelled = true
     }
-  }, [docId])
+  }, [backendDocId])
 
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = docId
+    const currentDocId = backendDocId
     setData((prev) => ({ ...prev, activity: [] }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/activity`, { headers, signal: controller.signal })
@@ -705,13 +733,13 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [docId])
+  }, [backendDocId])
 
   useEffect(() => {
-    if (!docId) return
+    if (!backendDocId) return
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = docId
+    const currentDocId = backendDocId
     setData((prev) => ({ ...prev, summary: null }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/summary`, { headers, signal: controller.signal })
@@ -735,13 +763,13 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [docId])
+  }, [backendDocId])
 
   useEffect(() => {
-    if (!docId) return
+    if (!backendDocId) return
     let cancelled = false
     const controller = new AbortController()
-    const currentDocId = docId
+    const currentDocId = backendDocId
     setData((prev) => ({ ...prev, pipeline: null }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/pipeline`, { headers, signal: controller.signal })
@@ -763,7 +791,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       cancelled = true
       controller.abort()
     }
-  }, [docId])
+  }, [backendDocId])
 
   useEffect(() => {
     const headers = authHeaders()
@@ -784,6 +812,7 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   return useMemo(
     () => ({
       docId,
+      backendDocId,
       namespace,
       view,
       highlight,
@@ -796,6 +825,6 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       data,
       streaming,
     }),
-    [docId, namespace, view, highlight, listFilter, showSources, setListFilter, go, selectRun, toggleSources, data, streaming]
+    [docId, backendDocId, namespace, view, highlight, listFilter, showSources, setListFilter, go, selectRun, toggleSources, data, streaming]
   )
 }
