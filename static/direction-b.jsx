@@ -75,6 +75,12 @@ const lStyle = `
   .l-doc-strip .t{font-size:13px;color:${L.ink};font-weight:600;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .l-doc-strip .s{font-size:11px;color:${L.ink3};margin-top:1px;font-family:${L.mono}}
+  .l-graph-entry{border:0;border-right:1px solid ${L.rule};background:${L.panel};padding:10px 18px;
+    min-width:132px;text-align:left;cursor:pointer}
+  .l-graph-entry:hover{background:${L.panelDim}}
+  .l-graph-entry .e{font-size:10px;color:${L.ink3};letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:2px}
+  .l-graph-entry .v{font-size:13px;color:${L.accent};font-weight:600}
+  .l-graph-entry .d{font-size:10.5px;color:${L.ink3};font-family:${L.mono};margin-top:1px}
   .l-kpi{padding:10px 18px;border-right:1px solid ${L.rule};display:flex;flex-direction:column;justify-content:center;min-width:122px}
   .l-kpi:last-child{border-right:0}
   .l-kpi .e{font-size:10px;color:${L.ink3};letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:2px}
@@ -1423,6 +1429,9 @@ function LatticeDashboard() {
 
   const tsStr = fetchTs ? lFormatLocalTime(fetchTs) : 'loading...';
   const activeDocId = selectedDocId || localStorage.getItem('op_selected_doc') || doc.id || null;
+  const graphNamespace = typeof rawStatus?.graph_namespace === 'string' && rawStatus.graph_namespace.length > 0
+    ? rawStatus.graph_namespace
+    : null;
   const parseStage = pipeline.find(p => p.id === 'parse' || /parse|ocr/i.test(p.name || ''));
   const indexStage = pipeline.find(p => p.id === 'index' || /chunk|index/i.test(p.name || ''));
   const parseKpi = lStageKpi(parseStage);
@@ -1522,6 +1531,11 @@ function LatticeDashboard() {
             </div>
           )}
         </div>
+        <button className="l-graph-entry" onClick={() => onView && onView({ view: 'evidence', docId: activeDocId })}>
+          <div className="e">GraphRAG</div>
+          <div className="v">Matter graph</div>
+          <div className="d">{graphNamespace ? 'real graph namespace' : 'graph unavailable'}</div>
+        </button>
         <LKpi label="Claims" value={totalClaims.toLocaleString()} delta={`${claimsData.chronology||0} chrono · ${claimsData.people||0} people`} />
         <LKpi label="Parse/OCR" value={parseKpi.value} tone={parseKpi.tone} delta={parseKpi.delta} />
         <LKpi label="Chunk/Index" value={indexKpi.value} tone={indexKpi.tone} delta={indexKpi.delta} />

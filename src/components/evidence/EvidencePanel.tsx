@@ -287,7 +287,12 @@ export function EvidencePanel({ docId, namespace, claimId, onBack }: EvidencePan
           >
             ← Back to monitor
           </button>
-          <h1 className="font-serif text-[22px] font-medium tracking-tight">Evidence graph</h1>
+          <div>
+            <h1 className="font-serif text-[22px] font-medium tracking-tight">Evidence graph</h1>
+            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--ink-3)]">
+              GraphRAG workbench · matter graph
+            </div>
+          </div>
           <span className="font-mono text-[11px] text-[var(--ink-3)]">
             {graph?.nodes.length ?? 0} nodes · {graph?.edges.length ?? 0} edges
           </span>

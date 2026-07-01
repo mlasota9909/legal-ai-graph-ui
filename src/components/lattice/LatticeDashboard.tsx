@@ -553,6 +553,13 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
           >
             Sources<SourceDot source="real" show />
           </button>
+          <button
+            type="button"
+            onClick={() => nav?.go('evidence')}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            GraphRAG →
+          </button>
         </div>
         <div className="flex min-w-[220px] flex-1 flex-col justify-center border-r border-[var(--rule)] px-4 py-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Active run</div>

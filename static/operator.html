@@ -494,6 +494,60 @@
       window.history.pushState(null, '', next);
     }
 
+    function StaticGraphWorkbench({ docId, onBack }) {
+      const [status, setStatus] = React.useState(null);
+      const [failed, setFailed] = React.useState(false);
+      React.useEffect(() => {
+        setStatus(null);
+        setFailed(false);
+        if (!docId) return;
+        fetch('/api/status/' + encodeURIComponent(docId))
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => { if (d) setStatus(d); else setFailed(true); })
+          .catch(() => setFailed(true));
+      }, [docId]);
+      const namespace = status && typeof status.graph_namespace === 'string' && status.graph_namespace.length > 0
+        ? status.graph_namespace
+        : null;
+      const openHref = docId ? '/runs/' + encodeURIComponent(docId) + '/evidence' : '#';
+      return (
+        <div style={{ minHeight: '100vh', background: '#F7F7F4', color: '#111827', padding: 32, fontFamily: 'Inter, system-ui, sans-serif' }}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{ border: '1px solid #D8D6CE', background: '#fff', borderRadius: 6, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}
+          >
+            ← Monitor
+          </button>
+          <div style={{ marginTop: 24, maxWidth: 760, border: '1px solid #D8D6CE', borderRadius: 8, background: '#fff', padding: 24 }}>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: '#6B7280' }}>
+              GraphRAG workbench
+            </div>
+            <h1 style={{ margin: '8px 0 10px', fontFamily: '"Source Serif Pro", Georgia, serif', fontSize: 30, fontWeight: 500 }}>
+              Matter graph
+            </h1>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: '#4B5563' }}>
+              Static operator entry point. The interactive graph opens from the SPA evidence workbench and uses Core /api/graph.
+            </p>
+            <div style={{ marginTop: 18, borderTop: '1px solid #ECEBE4', paddingTop: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: '#4B5563' }}>
+              <div>document: {docId || 'unavailable'}</div>
+              <div>graph namespace: {namespace || 'unavailable'}</div>
+              <div>state: {failed ? 'status unavailable' : (namespace ? 'real graph available' : 'graph unavailable')}</div>
+            </div>
+            {namespace ? (
+              <a href={openHref} style={{ display: 'inline-block', marginTop: 18, color: '#2C5BE0', fontWeight: 600, fontSize: 13 }}>
+                Open full graph workbench →
+              </a>
+            ) : (
+              <div style={{ marginTop: 18, color: '#6B7280', fontSize: 13 }}>
+                Graph unavailable until Core reports a graph namespace for this document.
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     function Workspace() {
       const initialRoute = readOperatorRoute();
       const [view, setView] = React.useState(initialRoute.view);
@@ -524,6 +578,8 @@
         <window.NavContext.Provider value={{ go, view, highlight }}>
           {view === 'monitor'
             ? <LatticeDashboard />
+            : view === 'evidence'
+              ? <StaticGraphWorkbench docId={initialRoute.docId || localStorage.getItem('op_selected_doc')} onBack={() => go('monitor')} />
             : <AtriumDashboard initialTab={view} key={view} />}
         </window.NavContext.Provider>
       );

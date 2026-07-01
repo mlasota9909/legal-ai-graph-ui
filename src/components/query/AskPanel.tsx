@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useNav } from '../../context/NavContext'
 import { SourceDot } from '../shared/SourceDot'
-import type { QueryCitation, QueryResponse } from '../../types/contracts'
+import type { QueryCitation, QueryResponse, QuerySupportingNode, QuerySupportingProvenance } from '../../types/contracts'
 import { DATA_SOURCE_LABELS, parseDataSource as parseSourceData } from '../../utils/dataSource'
 import type { DataSource } from '../../utils/dataSource'
 
@@ -59,6 +59,28 @@ function citationLabel(citation: QueryCitation): string {
   const page = citation.page != null ? ` · p.${citation.page}` : ''
   const source = citation.source.trim() || 'source'
   return `${source}${page}`
+}
+
+function supportingNodeLabel(node: QuerySupportingNode): string {
+  return node.display_name ?? node.title ?? node.name ?? node.label ?? node.text_preview ?? node.id
+}
+
+function supportingNodeType(node: QuerySupportingNode): string {
+  return node.primary_type ?? node.type ?? node.labels?.[0] ?? 'node'
+}
+
+function supportingProvenanceLabel(
+  provenance: QuerySupportingProvenance | QuerySupportingProvenance[] | null | undefined
+): string | null {
+  const first = Array.isArray(provenance) ? provenance[0] : provenance
+  if (!first) return null
+  const page = first.page ?? first.page_start ?? null
+  const parts = [
+    first.document_id ? `doc ${first.document_id}` : null,
+    first.chunk_id ? `chunk ${first.chunk_id}` : null,
+    page != null ? `p.${page}` : null,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function matchCitationsToSentences(
@@ -187,6 +209,14 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
   const validationStyle = VALIDATION_STYLES[validation]
   const answerBlocks = response ? matchCitationsToSentences(splitSentences(response.answer), response.citations) : []
   const firstCitationNodeId = response?.citations.find((c) => c.node_id)?.node_id ?? null
+  const supportingGraph = response?.supporting_subgraph
+  const supportingNodes = Array.isArray(supportingGraph?.nodes) ? supportingGraph.nodes : []
+  const supportingEdges = Array.isArray(supportingGraph?.edges) ? supportingGraph.edges : []
+  const supportingGraphStatus =
+    supportingGraph?.status ?? (supportingNodes.length > 0 || supportingEdges.length > 0 ? 'available' : 'empty')
+  const supportingGraphSource = parseSourceData(supportingGraph?.data_source ?? response?.data_source)
+  const firstSupportingNodeId = supportingNodes.find((node) => node.id)?.id ?? firstCitationNodeId
+  const showSupportingGraph = !!response && supportingGraph != null
   const hasAnswerContent = answerBlocks.some((block) => block.sentence || block.citations.length > 0)
 
   return (
@@ -274,6 +304,94 @@ export function AskPanel({ docId, namespace, onBack, onGoEvidence }: AskPanelPro
               >
                 View in graph →
               </button>
+            )}
+
+            {showSupportingGraph && (
+              <details
+                open={supportingNodes.length > 0 || supportingEdges.length > 0}
+                className="rounded-lg border border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-3"
+              >
+                <summary className="cursor-pointer list-none">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div>
+                      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
+                        Supporting subgraph
+                      </div>
+                      <div className="mt-1 text-[12px] text-[var(--ink-2)]">
+                        {supportingNodes.length} nodes · {supportingEdges.length} edges · {supportingGraphStatus}
+                      </div>
+                    </div>
+                    <span className="ml-auto flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
+                      {DATA_SOURCE_LABELS[supportingGraphSource]}
+                      <SourceDot source={supportingGraphSource} show />
+                    </span>
+                  </div>
+                </summary>
+
+                {supportingNodes.length === 0 && supportingEdges.length === 0 ? (
+                  <p className="mt-3 text-[12px] text-[var(--ink-2)]">
+                    Supporting graph {supportingGraphStatus}. The query response did not include graph nodes or edges.
+                    {supportingGraph?.unavailable_reason ? ` ${supportingGraph.unavailable_reason}` : ''}
+                  </p>
+                ) : (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
+                        Nodes
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {supportingNodes.slice(0, 6).map((node) => (
+                          <div key={node.id} className="rounded border border-[var(--rule-soft)] bg-[var(--panel)] px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded bg-[var(--rule-soft)] px-2 py-0.5 font-mono text-[9px] uppercase text-[var(--ink-3)]">
+                                {supportingNodeType(node)}
+                              </span>
+                              <span className="truncate text-[12px] font-medium text-[var(--ink)]">
+                                {supportingNodeLabel(node)}
+                              </span>
+                            </div>
+                            {supportingProvenanceLabel(node.provenance) && (
+                              <div className="mt-1 font-mono text-[10px] text-[var(--ink-3)]">
+                                {supportingProvenanceLabel(node.provenance)}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
+                        Edges
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {supportingEdges.slice(0, 6).map((edge) => (
+                          <div key={edge.id} className="rounded border border-[var(--rule-soft)] bg-[var(--panel)] px-3 py-2">
+                            <div className="font-mono text-[10px] uppercase text-[var(--accent)]">{edge.type}</div>
+                            <div className="mt-1 break-all font-mono text-[10px] text-[var(--ink-3)]">
+                              {edge.source} → {edge.target}
+                            </div>
+                          </div>
+                        ))}
+                        {supportingEdges.length === 0 && (
+                          <div className="rounded border border-[var(--rule-soft)] bg-[var(--panel)] px-3 py-2 text-[12px] text-[var(--ink-2)]">
+                            No edges returned for this answer.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {onGoEvidence && firstSupportingNodeId && (
+                  <button
+                    type="button"
+                    onClick={() => onGoEvidence(firstSupportingNodeId)}
+                    className="mt-4 font-mono text-[11px] text-[var(--accent)] underline-offset-2 hover:underline"
+                  >
+                    Open supporting graph →
+                  </button>
+                )}
+              </details>
             )}
 
             <div className="space-y-5">

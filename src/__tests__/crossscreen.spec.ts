@@ -862,6 +862,49 @@ test('register row opens graph workbench with provenance seed', async ({ page })
   await provenanceRequest
 })
 
+test('operator monitor exposes dedicated GraphRAG workbench entry point', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'test_operator_graphrag_entry',
+    namespace: 'operator_graph_ns',
+  })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        namespace: 'operator_graph_ns',
+        document_id: docId,
+        root_node_id: 'test:chunk:1',
+        depth: 2,
+        edge_kinds: 'entity',
+        data_source: 'real',
+        nodes: [
+          {
+            id: 'test:chunk:1',
+            labels: ['EVIDENCE'],
+            primary_type: 'EVIDENCE',
+            display_name: 'Operator graph seed',
+            properties: {},
+          },
+        ],
+        edges: [],
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${docId}`)
+  await expect(page.getByRole('button', { name: /GraphRAG/i })).toBeVisible({ timeout: 10000 })
+
+  const graphRequest = page.waitForRequest((request) => request.url().includes('/api/graph'))
+  await page.getByRole('button', { name: /GraphRAG/i }).click()
+  await graphRequest
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}/evidence`), { timeout: 10000 })
+  await expect(page.getByText('GraphRAG workbench · matter graph')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByRole('heading', { name: 'Evidence graph', exact: true })).toBeVisible()
+})
+
 test('EvidencePanel graph fallback shows unavailable when namespace is missing', async ({ page }) => {
   const docId = await mockEvidencePanelDocument(page, {
     docId: 'test_evidence_no_namespace',
@@ -1030,6 +1073,7 @@ async function mockStaticOperatorApi(page: Page, overrides: Record<string, unkno
     document_id: docId,
     label: 'Static Operator Matter',
     data_source: 'real',
+    graph_namespace: 'static_operator_ns',
     pipeline_stage: 'running',
     chronology_status: 'completed',
     people_mentioned_status: 'running',
@@ -1456,6 +1500,47 @@ test('static operator shows honest pipeline counters and fleet unavailable state
   await expect(page.locator('.l-hw-cell').filter({ hasText: 'Alienware' })).toContainText(/tokens unavailable/)
   await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('120k')
   await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('1 host')
+})
+
+test('static operator exposes GraphRAG workbench entry point', async ({ page }) => {
+  await serveStaticJsxAsRaw(page)
+  const docId = await mockStaticOperatorApi(page)
+
+  await page.goto(STATIC_OPERATOR_URL)
+
+  const graphEntry = page.getByRole('button', { name: /GraphRAG/i })
+  await expect(graphEntry).toBeVisible({ timeout: 15000 })
+  await expect(graphEntry).toContainText('real graph namespace')
+
+  await graphEntry.click()
+  await expect(page).toHaveURL(new RegExp(`/static/operator\\.html#view=evidence&doc=${docId}`))
+  await expect(page.getByText('GraphRAG workbench')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByRole('heading', { name: 'Matter graph' })).toBeVisible()
+  await expect(page.getByText('graph namespace: static_operator_ns')).toBeVisible()
+  await expect(page.getByRole('link', { name: /Open full graph workbench/i })).toHaveAttribute(
+    'href',
+    `/runs/${docId}/evidence`
+  )
+})
+
+test('static operator GraphRAG entry reports unavailable namespace honestly', async ({ page }) => {
+  await serveStaticJsxAsRaw(page)
+  const docId = await mockStaticOperatorApi(page, {
+    status: { graph_namespace: null },
+  })
+
+  await page.goto(STATIC_OPERATOR_URL)
+
+  const graphEntry = page.getByRole('button', { name: /GraphRAG/i })
+  await expect(graphEntry).toBeVisible({ timeout: 15000 })
+  await expect(graphEntry).toContainText('graph unavailable')
+
+  await graphEntry.click()
+  await expect(page).toHaveURL(new RegExp(`/static/operator\\.html#view=evidence&doc=${docId}`))
+  await expect(page.getByText('Graph unavailable until Core reports a graph namespace for this document.')).toBeVisible({
+    timeout: 10000,
+  })
+  await expect(page.getByRole('link', { name: /Open full graph workbench/i })).toHaveCount(0)
 })
 
 test('static operator browser back stays in operator context after pipeline drill-down', async ({ page }) => {
@@ -1901,6 +1986,138 @@ test('AskPanel renders unknown source state for future data_source values', asyn
   await expect(page.getByText('unknown source state')).toBeVisible({ timeout: 10000 })
   await expect(page.locator('[title="unknown source state"]')).toBeVisible()
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
+})
+
+test('AskPanel renders typed supporting subgraph without path field leakage', async ({ page }) => {
+  const TEST_DOC_ID = await mockEvidencePanelDocument(page, {
+    docId: 'test_doc_query_supporting_graph',
+    namespace: 'query_graph_ns',
+  })
+
+  await page.route('**/api/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        answer_basis: 'retrieved_evidence',
+        answer: 'The answer is supported by Query claim.',
+        citations: [
+          {
+            evidence_id: 'ev-query-1',
+            result_id: 'result-query-1',
+            source: 'Graph register',
+            node_id: 'query:claim:1',
+            chunk_id: 'query:chunk:1',
+            page: 4,
+            namespace: 'query_graph_ns',
+          },
+        ],
+        supporting_subgraph: {
+          status: 'available',
+          data_source: 'real',
+          nodes: [
+            {
+              id: 'query:claim:1',
+              labels: ['CLAIM'],
+              primary_type: 'CLAIM',
+              display_name: 'Query claim',
+              salience_score: 0.92,
+              confidence: 0.84,
+              provenance: { document_id: TEST_DOC_ID, chunk_id: 'query:chunk:1', page_start: 4 },
+              data_source: 'real',
+            },
+            {
+              id: 'query:evidence:1',
+              labels: ['EVIDENCE'],
+              primary_type: 'EVIDENCE',
+              text_preview: 'Evidence preview',
+              provenance: { document_id: TEST_DOC_ID, chunk_id: 'query:chunk:2', page_start: 5 },
+              data_source: 'real',
+            },
+          ],
+          edges: [
+            {
+              id: 'query:edge:1',
+              type: 'SUPPORTED_BY',
+              source: 'query:claim:1',
+              target: 'query:evidence:1',
+              provenance: { document_id: TEST_DOC_ID, chunk_id: 'query:chunk:1', page_start: 4 },
+              data_source: 'real',
+            },
+          ],
+        },
+        validation_status: 'supported',
+        confidence: 0.84,
+        retrieval_debug: {},
+      }),
+    })
+  })
+
+  await page.route('**/api/graph**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        namespace: 'query_graph_ns',
+        document_id: TEST_DOC_ID,
+        root_node_id: 'query:claim:1',
+        depth: 2,
+        edge_kinds: 'entity',
+        data_source: 'real',
+        nodes: [
+          {
+            id: 'query:claim:1',
+            labels: ['CLAIM'],
+            primary_type: 'CLAIM',
+            display_name: 'Query claim',
+            properties: {},
+          },
+          {
+            id: 'query:evidence:1',
+            labels: ['EVIDENCE'],
+            primary_type: 'EVIDENCE',
+            display_name: 'Evidence preview',
+            properties: {},
+          },
+        ],
+        edges: [
+          {
+            id: 'query:edge:1',
+            source: 'query:claim:1',
+            target: 'query:evidence:1',
+            type: 'SUPPORTED_BY',
+            key_props: {},
+            provenance: { chunk_id: 'query:chunk:1', page_start: 4 },
+            properties: {},
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.goto(`/runs/${TEST_DOC_ID}/ask`)
+
+  const textarea = page.locator('textarea').first()
+  await expect(textarea).toBeVisible({ timeout: 10000 })
+  await textarea.fill('What supports the answer?')
+
+  const submitButton = page.locator('main button').filter({ hasText: 'Ask' }).first()
+  await expect(submitButton).toBeEnabled({ timeout: 5000 })
+  await submitButton.click()
+
+  await expect(page.getByText('Supporting subgraph')).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('Query claim', { exact: true })).toBeVisible()
+  await expect(page.getByText('SUPPORTED_BY')).toBeVisible()
+  await expect(page.getByText(['source', 'uri'].join('_'))).toHaveCount(0)
+
+  const graphRequest = page.waitForRequest((request) => {
+    if (!request.url().includes('/api/graph')) return false
+    return new URL(request.url()).searchParams.get('node') === 'query:claim:1'
+  })
+  await page.getByRole('button', { name: /Open supporting graph/i }).click()
+  await graphRequest
+  await expect(page).toHaveURL(new RegExp(`/runs/${TEST_DOC_ID}/evidence`), { timeout: 10000 })
 })
 
 test('AskPanel renders empty real query response without fabricating an answer', async ({ page }) => {

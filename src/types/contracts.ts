@@ -267,10 +267,56 @@ export interface QueryCitation {
   namespace?: string | null
 }
 
+export type QuerySupportingSubgraphStatus = 'available' | 'empty' | 'degraded' | 'unavailable'
+
+export interface QuerySupportingProvenance {
+  document_id?: string | null
+  chunk_id?: string | null
+  evidence_id?: string | null
+  result_id?: string | null
+  page?: number | null
+  page_start?: number | null
+  page_end?: number | null
+}
+
+export interface QuerySupportingNode {
+  id: string
+  labels?: string[]
+  label?: string | null
+  type?: string | null
+  primary_type?: string | null
+  name?: string | null
+  display_name?: string | null
+  title?: string | null
+  text_preview?: string | null
+  salience?: number | null
+  salience_score?: number | null
+  confidence?: number | null
+  provenance?: QuerySupportingProvenance | QuerySupportingProvenance[] | null
+  data_source?: DataSource | string | null
+}
+
+export interface QuerySupportingEdge {
+  id: string
+  type: string
+  source: string
+  target: string
+  provenance?: QuerySupportingProvenance | QuerySupportingProvenance[] | null
+  data_source?: DataSource | string | null
+}
+
+export interface QuerySupportingSubgraph {
+  nodes?: QuerySupportingNode[]
+  edges?: QuerySupportingEdge[]
+  data_source?: DataSource | string | null
+  status?: QuerySupportingSubgraphStatus | string | null
+  unavailable_reason?: string | null
+}
+
 export interface QueryResponse {
   answer: string
   citations: QueryCitation[]
-  supporting_subgraph: Record<string, unknown>
+  supporting_subgraph: QuerySupportingSubgraph
   validation_status: string
   confidence: number
   data_source: DataSource
