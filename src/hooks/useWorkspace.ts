@@ -31,8 +31,6 @@ const VIEW_SEGMENTS: Record<string, ArtifactView> = {
   ask: 'ask',
 }
 
-const KNOWN_BACKEND_DOC_IDS = ['original_royalcomm', 'volume_10', 'romancath', 'tanyaday', 'hopper']
-
 interface RouteState {
   docId: string
   view: ArtifactView
@@ -85,6 +83,10 @@ interface StatusDocument {
   } | null
 }
 
+interface StatusListResponse {
+  documents: StatusDocument[]
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -105,18 +107,6 @@ function isReviewRoute(): boolean {
   return window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
 }
 
-function normalizeReviewDocumentId(value: string): string {
-  const decoded = decodeURIComponent(value || mockData.doc.id)
-  if (KNOWN_BACKEND_DOC_IDS.includes(decoded)) return decoded
-
-  const lower = decoded.toLowerCase()
-  const match = [...KNOWN_BACKEND_DOC_IDS]
-    .sort((a, b) => b.length - a.length)
-    .find((id) => lower === id || lower.includes(id))
-
-  return match ?? decoded
-}
-
 function titleFromDocId(docId: string): string {
   return docId
     .split(/[_-]+/)
@@ -129,7 +119,7 @@ function parseRoute(defaultDocId: string): RouteState {
   const parts = window.location.pathname.split('/').filter(Boolean)
   const rawDocId = parts[0] === 'runs' && parts[1] ? decodeURIComponent(parts[1]) : defaultDocId
   return {
-    docId: normalizeReviewDocumentId(rawDocId),
+    docId: rawDocId,
     view: parseView(window.location.pathname),
   }
 }
@@ -179,6 +169,54 @@ async function fetchRegister(docId: string, type: RegisterType, limit = 500): Pr
   return fetchJson<RegisterResponse>(
     `/api/registers/${encodeURIComponent(docId)}?type=${type}&limit=${limit}`
   )
+}
+
+function canonicalDocumentIdFromStatus(rawId: string, documents: StatusDocument[]): string | null {
+  const decoded = decodeURIComponent(rawId || '').toLowerCase()
+  const rawTokens = new Set(decoded.split(/[^a-z0-9]+/).filter(Boolean))
+  const candidates = documents
+    .map((doc) => doc.document_id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    .sort((a, b) => b.length - a.length)
+
+  for (const id of candidates) {
+    if (decoded === id.toLowerCase()) return id
+  }
+
+  // ponytail: temporary upload-id shim; remove when Core upload completion returns canonical document_id.
+  for (const id of candidates) {
+    const idTokens = id.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    if (idTokens.length > 0 && idTokens.every((token) => rawTokens.has(token))) return id
+  }
+
+  return null
+}
+
+function markUnresolvedUploadId(prev: WorkspaceData, docId: string): WorkspaceData {
+  return {
+    ...prev,
+    isRealData: false,
+    doc: {
+      ...prev.doc,
+      id: docId,
+      title: 'Unresolved upload id',
+      pages: 0,
+      docType: 'unresolved upload',
+      jurisdiction: '',
+      ingestedAt: 'unavailable',
+      elapsedHours: 0,
+    },
+    pipelines: [],
+    chronology: [],
+    entities: [],
+    people: [],
+    conflicts: [],
+    signals: [],
+    activity: [],
+    reports: { exec: [], detailed: [] },
+    summary: null,
+    pipeline: null,
+  }
 }
 
 function applyStatus(prev: WorkspaceData, status: StatusDocument): WorkspaceData {
@@ -559,10 +597,26 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
             ? status.graph_namespace
             : null
         )
-      } catch {
-        if (!cancelled) {
-          setData((prev) => ({ ...prev, isRealData: false }))
+      } catch (error) {
+        if (cancelled) return
+        if (error instanceof Error && error.message.startsWith('404 ')) {
+          try {
+            const statusList = await fetchJson<StatusListResponse>('/api/status?limit=200')
+            if (cancelled) return
+            const canonicalDocId = canonicalDocumentIdFromStatus(docId, statusList.documents ?? [])
+            if (canonicalDocId && canonicalDocId !== docId) {
+              setDocId(canonicalDocId)
+              setNamespace(null)
+              return
+            }
+          } catch {
+            // Keep the unresolved state below; the review route must not fall back to seed data.
+          }
+          setData((prev) => markUnresolvedUploadId(prev, docId))
+          setNamespace(null)
+          return
         }
+        setData((prev) => ({ ...prev, isRealData: false }))
       }
     }
 

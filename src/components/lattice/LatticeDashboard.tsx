@@ -366,6 +366,7 @@ function ActivityLog({ data }: { data: WorkspaceData }) {
 function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: WorkspaceData }) {
   const nav = useNav()
   const isReport = artifact.kind === 'report'
+  const unresolvedUpload = data.doc.docType === 'unresolved upload'
   const loadedCount = isListArtifactId(artifact.id) ? loadedListCount(data, artifact.id) : 0
   const runTotal = artifact.count ?? artifact.sections ?? 0
   const meterTotal = isReport ? runTotal : loadedCount || runTotal
@@ -373,7 +374,11 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
   const accepted = artifact.accepted ?? 0
   const disputed = artifact.disputed ?? 0
   const superseded = artifact.superseded ?? 0
-  const artifactSource = artifact.id === 'people' && data.people.some((row) => row.dataSource === 'real') ? 'real' : 'mock'
+  const artifactSource = unresolvedUpload
+    ? 'unavailable'
+    : artifact.id === 'people' && data.people.some((row) => row.dataSource === 'real')
+      ? 'real'
+      : 'mock'
 
   const listItems = () => {
     if (artifact.id === 'chronology') {
@@ -540,6 +545,8 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
 export function LatticeDashboard({ data }: LatticeDashboardProps) {
   const nav = useNav()
   const showSources = nav?.showSources ?? false
+  const unresolvedUpload = data.doc.docType === 'unresolved upload'
+  const docSource: DataSource = data.isRealData ? 'real' : unresolvedUpload ? 'unavailable' : 'mock'
   const externalSourceCounts = data.augmentation.externalSourcesBySource
   const eyeciteCount = externalSourceCount(externalSourceCounts, 'eyecite')
   const austliiCount = externalSourceCount(externalSourceCounts, 'austlii')
@@ -616,7 +623,7 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
           <DocumentPicker activeId={data.doc.id} title={data.doc.title} />
           <div className="font-mono text-[11px] text-[var(--ink-3)]">
             {data.doc.id} · {data.doc.pages.toLocaleString()}pp · {data.doc.docType.toLowerCase().replace(/_/g, ' ')}
-            <SourceDot source={data.isRealData ? 'real' : 'mock'} show={showSources} /> ·{' '}
+            <SourceDot source={docSource} show={showSources} /> ·{' '}
             {data.doc.jurisdiction}
           </div>
         </div>
@@ -633,6 +640,11 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
       </div>
 
       <div className="space-y-5 px-6 py-5">
+        {unresolvedUpload && (
+          <div className="rounded-lg border border-[var(--warn)] bg-[var(--warn-soft)] px-4 py-3 text-[13px] text-[var(--ink)]" role="status">
+            Unable to resolve upload id to a backend document. No real review data is available for {data.doc.id}.
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="lg:col-span-8">
             <div className="overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)]">

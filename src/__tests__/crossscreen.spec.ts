@@ -253,7 +253,7 @@ async function mockEvidencePanelDocument(
     graph_namespace: namespace,
   }
 
-  await page.route('**/api/status', async (route) => {
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -358,6 +358,32 @@ async function mockEvidencePanelDocument(
   })
 
   return docId
+}
+
+async function mockMissingReviewDocument(page: Page, rawId: string): Promise<void> {
+  await page.route(`**/api/status/${rawId}`, async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'status_not_found' } }),
+    })
+  })
+  await page.route(`**/api/registers/${rawId}**`, async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: { code: 'register_not_found' } }),
+    })
+  })
+  for (const suffix of ['activity', 'summary', 'pipeline']) {
+    await page.route(`**/api/docs/${rawId}/${suffix}`, async (route) => {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: { code: `${suffix}_not_found` } }),
+      })
+    })
+  }
 }
 
 function parseCount(text: string | null | undefined): number {
@@ -598,7 +624,7 @@ test('atrium augmentation provider rows do not invent omitted source counts', as
     },
   }
 
-  await page.route('**/api/status', async (route) => {
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -1251,12 +1277,14 @@ async function mockStaticLawyerMatter(page: Page, docId = 'static_export_doc') {
 }
 
 test('canonical review route normalizes uploaded Hopper run id and exposes review links', async ({ page }) => {
+  const rawId = 'ui-original_hca_hopper_v_vic-20260701T054753Z-01'
   const docId = await mockEvidencePanelDocument(page, {
     docId: 'hopper',
     namespace: 'mdoc20260621_hopper',
   })
+  await mockMissingReviewDocument(page, rawId)
 
-  await page.goto('/runs/ui-original_hca_hopper_v_vic-20260701T054753Z-01')
+  await page.goto(`/runs/${rawId}`)
 
   await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
   await expect(page.getByRole('link', { name: 'Operator review' })).toHaveAttribute('href', `/runs/${docId}`)
@@ -1273,6 +1301,63 @@ test('canonical review route normalizes uploaded Hopper run id and exposes revie
   const bodyText = await page.locator('body').innerText()
   expect(bodyText).not.toContain(MOCK_TITLE)
   expect(bodyText).not.toContain('Smith Holdings')
+})
+
+test('upload completion route resolves canonical document id from Core status list', async ({ page }) => {
+  const rawId = 'ui-original_custom_case-20260701T000000Z-01'
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'custom_case',
+    namespace: 'mdoc20260621_custom_case',
+  })
+  await mockMissingReviewDocument(page, rawId)
+
+  await page.goto(`/runs/${rawId}`)
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+  await expect(page.getByRole('link', { name: 'Operator review' })).toHaveAttribute('href', `/runs/${docId}`)
+  await expect(page.getByRole('link', { name: 'Lawyer review' })).toHaveAttribute(
+    'href',
+    `/runs/${docId}/chronology`
+  )
+  await expect(page.getByRole('link', { name: 'Evidence graph' })).toHaveAttribute(
+    'href',
+    `/runs/${docId}/evidence`
+  )
+  await expect(page.getByRole('link', { name: 'Ask' })).toHaveAttribute('href', `/runs/${docId}/ask`)
+})
+
+test('unknown upload id stays unresolved without seeded review data', async ({ page }) => {
+  const rawId = 'ui-original_unknown_matter-20260701T000000Z-01'
+  await mockMissingReviewDocument(page, rawId)
+  await page.route(/\/api\/status(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        documents: [{ document_id: 'hopper', label: 'Hopper', graph_namespace: 'mdoc20260621_hopper' }],
+      }),
+    })
+  })
+  await page.route('**/api/packs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', packs: [] }) })
+  })
+  await page.route('**/api/fleet', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data_source: 'real', hosts: [] }) })
+  })
+
+  await page.goto(`/runs/${rawId}`)
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${rawId}$`))
+  await expect(page.getByRole('status')).toContainText('Unable to resolve upload id to a backend document')
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+  await page.waitForTimeout(5500)
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).not.toContain(MOCK_TITLE)
+  expect(bodyText).not.toContain('Smith Holdings')
+  expect(bodyText).not.toContain('ZZ_DUMMY_ACTIVITY_')
 })
 
 test('canonical review activity stays empty when no real activity exists', async ({ page }) => {
