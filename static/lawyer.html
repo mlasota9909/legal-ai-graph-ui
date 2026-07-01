@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atrium · Lawyer workbench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+Pro:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #F7F6F2; height: 100%; }
+    #root { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="root" data-debug-storage-key="lw_debug_ids"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script src="data.js"></script>
+  <script src="lawyer-data.js"></script>
+
+  <script type="text/babel" src="view-switcher.jsx"></script>
+  <script type="text/babel" src="lawyer-app.jsx"></script>
+  <script type="text/babel" src="lawyer-artifacts.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    function apiAuthHeaders(withJson) {
+      const headers = {};
+      if (withJson) headers['Content-Type'] = 'application/json';
+      const token = localStorage.getItem('legal_ai_token');
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
+    // T177 — TRACEABILITY.md panel IDs: panel:chronology|people|entities|synthesis|mindmap|trace-debug:{document_id}
+    function specPanelId(kind, docId) {
+      return `panel:${kind}:${docId || ''}`;
+    }
+
+    function TraceDebugPanel({ docId }) {
+      return (
+        <details
+          data-panel-id={specPanelId('trace-debug', docId)}
+          style={{ margin: '12px 0 0', fontFamily: 'Inter, system-ui, sans-serif' }}
+        >
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: '#8A8A82', fontWeight: 600, letterSpacing: '.04em' }}>
+            Trace Debug
+          </summary>
+          <div style={{ marginTop: 8, padding: 12, background: '#FFF', border: '1px solid #E8E6DF', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: '#8A8A82' }}>Trace debugging is unavailable in static mode.</div>
+          </div>
+        </details>
+      );
+    }
+
+    function UploadModal({ onClose, matterName, debugIds }) {
+      return (
+        <div
+          id="panel-upload-modal"
+          data-pane-id="panel:upload-modal"
+          onClick={onClose} style={{
+          position:'fixed', inset:0, background:'rgba(20,20,18,0.32)', zIndex:50,
+          display:'flex', alignItems:'center', justifyContent:'center', padding:40 }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background:'#FFF', borderRadius:14, width:520, padding:28,
+            boxShadow:'0 30px 80px rgba(0,0,0,.25)', border:'1px solid #E8E6DF',
+            fontFamily:'Inter, system-ui, sans-serif', maxHeight:'88vh', overflowY:'auto' }}>
+            <div style={{ fontSize:10.5, letterSpacing:'.12em', textTransform:'uppercase',
+              color:'#8A8A82', fontWeight:600, marginBottom:6 }}>
+              Upload to current matter
+            </div>
+            {debugIds && (
+              <div style={{
+                fontSize:9,fontFamily:'JetBrains Mono',color:'#8A8A82',
+                background:'#F0F0EB',border:'1px solid #E0DDD5',borderRadius:4,
+                padding:'2px 6px',marginBottom:8,display:'inline-flex'
+              }}>
+                panel:upload-modal
+              </div>
+            )}
+            <h2 style={{ fontFamily:'Source Serif Pro, serif', fontSize:22, margin:'0 0 6px', fontWeight:500, letterSpacing:'-0.018em' }}>
+              Document upload unavailable
+            </h2>
+            <p style={{ margin:'0 0 18px', fontSize:13, color:'#4A4A45', lineHeight:1.5 }}>
+              Upload is unavailable in this static lawyer build. Use the operator ingestion workflow to add documents to {matterName || 'this matter'}.
+            </p>
+            <div style={{ display:'flex', justifyContent:'flex-end', marginTop:14 }}>
+              <button onClick={onClose} className="lw-btn primary" style={{ width:'auto', padding:'9px 16px' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      injectLawStyle();
+      const [signedIn, setSignedIn] = React.useState(true);
+      const [matters, setMatters] = React.useState([]);
+      const [matterId, setMatterId] = React.useState('');
+      const [docId, setDocId] = React.useState('');
+      const [tab, setTab] = React.useState('chronology');
+      const [upload, setUpload] = React.useState(false);
+      const [tabCounts, setTabCounts] = React.useState({});
+      const [debugIds, toggleDebugIds] = useLawyerDebugIds();
+      const newestDoc = (docs) => {
+        const list = [...(docs || [])];
+        list.sort((a, b) => String(b.uploadTs || b.id || '').localeCompare(String(a.uploadTs || a.id || '')));
+        return list[0];
+      };
+      const newestMatterDoc = (matterList) => {
+        const pairs = [];
+        (matterList || []).forEach(m => (m.docs || []).forEach(d => pairs.push({ matter: m, doc: d })));
+        pairs.sort((a, b) => String(b.doc.uploadTs || b.doc.id || '').localeCompare(String(a.doc.uploadTs || a.doc.id || '')));
+        return pairs[0];
+      };
+
+      const matter = matters.find(m => m.id === matterId) || matters[0] || {};
+      const doc = (matter.docs || []).find(d => d.id === docId) || (matter.docs || [])[0] || {};
+      const effectiveDocId = doc.id || docId || '';
+
+      // Fetch real artifact counts whenever the active document changes
+      React.useEffect(() => {
+        setTabCounts({});
+        if (!effectiveDocId) return;
+        let cancelled = false;
+        function updateCounts(data) {
+          setTabCounts({
+            chronology: data.chronology_event_count,
+            entities: data.graph_counts?.entities_total,
+            people: data.people_mentioned_count ?? data.individuals_count,
+            claims: data.graph_counts?.claims_total,
+          });
+        }
+        fetch('/api/status/' + encodeURIComponent(effectiveDocId), { headers: apiAuthHeaders() })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (!data || cancelled) return; updateCounts(data); })
+          .catch(() => {});
+        return () => { cancelled = true; };
+      }, [effectiveDocId]);
+
+      // Load real matters from the API; any fallback data is ZZ_DUMMY-labelled.
+      React.useEffect(() => {
+        fetch('/api/matters', { headers: apiAuthHeaders() })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data && data.matters && data.matters.length) {
+              const sortedMatters = data.matters.map(m => ({
+                id: m.id,
+                namespace: m.namespace,
+                name: m.title || m.id,
+                shortName: m.title || m.id,
+                client: '',
+                practice: '',
+                lead: '',
+                docs: [{
+                  id: m.id,
+                  title: m.title || m.id,
+                  uploadTs: '',
+                }],
+                folders: [{ id: 'root', name: 'All documents' }],
+              }));
+              setMatters(sortedMatters);
+              const newest = newestMatterDoc(sortedMatters);
+              if (newest) {
+                setMatterId(newest.matter.id);
+                setDocId(newest.doc.id);
+              }
+            }
+          })
+          .catch(() => {});
+      }, []);
+
+      // when user clicks a citation chip in chat or memo
+      const onCite = (c) => {
+        if (c.artifact === 'memo')       setTab('memo');
+        else if (c.artifact === 'extrefs')   setTab('extrefs');
+        else if (c.artifact === 'chronology') setTab('chronology');
+        else if (c.artifact === 'people')     setTab('people');
+        else if (c.artifact === 'entities')   setTab('entities');
+        else if (c.artifact === 'docrefs')    setTab('docrefs');
+        else if (c.artifact === 'synthesis')  setTab('synthesis');
+      };
+
+      if (!signedIn) { window.location.href = 'login.html'; return null; }
+
+      return (
+        <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
+          <LawyerDebugToggle debugIds={debugIds} onToggle={toggleDebugIds} />
+          <ViewSwitcher current="lawyer" />
+          <div className="lw-root" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div className="lw-app">
+            <LawyerHeader matter={matter} doc={doc} onPickMatter={() => {}} onSignOut={() => setSignedIn(false)} />
+            <div className="lw-main">
+              <LawyerSidebar
+                matter={matter}
+                matters={matters}
+                doc={doc}
+                onPickDoc={(d) => { setDocId(d.id); }}
+                onPickMatter={(mid) => {
+                  const m2 = matters.find(x => x.id === mid);
+                  if (!m2) return;
+                  setMatterId(mid);
+                  const d = newestDoc(m2.docs);
+                  if (d) setDocId(d.id);
+                  setTab('chronology');
+                }}
+                onUpload={() => setUpload(true)}
+                debugIds={debugIds} />
+              <div className="lw-center">
+                <LawyerDocHeader doc={doc} matter={matter} />
+                <LawyerTabStrip active={tab} onPick={setTab} counts={tabCounts} />
+                <div className="lw-canvas">
+                  <LawyerArtifactBody tab={tab} onCite={onCite} docId={effectiveDocId} debugIds={debugIds} />
+                  <div data-panel-id={specPanelId('mindmap', effectiveDocId)} style={{ display: 'none' }} aria-hidden="true" />
+                  <TraceDebugPanel docId={effectiveDocId} />
+                </div>
+                <LawyerChatDock onCite={onCite} docId={effectiveDocId} currentNamespace={matter.namespace} />
+              </div>
+            </div>
+          </div>
+          </div>
+          {upload && <UploadModal onClose={() => setUpload(false)} matterName={matter.shortName} debugIds={debugIds} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

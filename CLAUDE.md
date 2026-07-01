@@ -1,5 +1,9 @@
 # CLAUDE.md — legal-ai-graph-ui (UI workstream)
 
+## Latest UI handoff
+
+2026-06-30 UI Codex action status is in `CLAUDE-HANDOFF.md`. Latest completed Linear issue: `MAC-51` for dynamic live EvidencePanel test document/namespace/seed discovery. Next recommended UI task: `MAC-52`, classify and harden the live AskPanel query Playwright timeout; revisit query scope only if Architect/Core move normal Ask from `document_id` to another public scope.
+
 ## ⚠️ READ FIRST — worker methodology & cost (updated 2026-06-23 by the backend chat)
 **Full guide: `/home/mlasota/legal-ai-coord/WORKER-METHODOLOGY.md` — read it before dispatching any worker.**
 Your workers have been "failing silently" and you've been re-doing the work yourself in Opus, which hit the

@@ -1,0 +1,1093 @@
+import { useEffect, useRef, useState } from 'react'
+import type { ActivityEvent, AgreementItem, ArtifactSummary, PackSummary, PacksListResponse, StatusDocument, WorkspaceData } from '../../types/contracts'
+import { useNav } from '../../context/NavContext'
+import { isListArtifactId, loadedListCount } from '../../utils/listArtifactRows'
+import { SourceDot } from '../shared/SourceDot'
+import { ReviewDocumentControls } from '../shared/ReviewDocumentControls'
+import { parseDataSource } from '../../utils/dataSource'
+import type { DataSource } from '../../utils/dataSource'
+
+interface LatticeDashboardProps {
+  data: WorkspaceData
+}
+
+const ACTIVITY_FILTERS = ['all', 'conflicts', 'decisions', 'claims', 'entity', 'synthesis', 'ext'] as const
+
+type ActivityFilter = (typeof ACTIVITY_FILTERS)[number]
+
+function sourceFrom(value: unknown): DataSource | undefined {
+  if (value == null || value === '') return undefined
+  return parseDataSource(value)
+}
+
+function countFrom(record: Record<string, unknown> | null | undefined, key: string): number {
+  const value = record?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function externalSourceCount(record: Record<string, number>, key: string): number | null {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : null
+}
+
+function sourceCountText(value: number | null): string {
+  return value == null ? 'unavailable' : value.toLocaleString()
+}
+
+function sourceCountKind(value: number | null): DataSource {
+  return value == null ? 'unavailable' : 'real'
+}
+
+function reviewHref(docId: string, view?: 'chronology' | 'evidence' | 'ask'): string {
+  const base = `/runs/${encodeURIComponent(docId)}`
+  return view ? `${base}/${view}` : base
+}
+
+function hasRealListRows(data: WorkspaceData, artifactId: ArtifactSummary['id']): boolean {
+  if (artifactId === 'chronology') return data.chronology.some((row) => row.dataSource === 'real')
+  if (artifactId === 'entities') return data.entities.some((row) => row.dataSource === 'real')
+  if (artifactId === 'people') return data.people.some((row) => row.dataSource === 'real')
+  return false
+}
+
+function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
+  const nav = useNav()
+  const selectRun = nav?.selectRun
+  const [open, setOpen] = useState(false)
+  const [packs, setPacks] = useState<PackSummary[]>([])
+  const autoSelected = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const authHeaders = (): HeadersInit => {
+      const token = localStorage.getItem('legal_ai_token') ?? ''
+      return token ? { Authorization: `Bearer ${token}` } : {}
+    }
+    const load = async () => {
+      try {
+        let items: PackSummary[] = []
+        const packsResp = await fetch('/api/packs', { headers: authHeaders() })
+        if (packsResp.ok) {
+          const payload = (await packsResp.json()) as PacksListResponse
+          items = (payload.packs ?? []).map((pack) => ({
+            ...pack,
+            counts_data_source: pack.counts_data_source ?? sourceFrom(pack.data_source),
+          }))
+        } else {
+          // /api/packs not yet deployed — fall back to /api/status
+          const statusResp = await fetch('/api/status', { headers: authHeaders() })
+          if (statusResp.ok) {
+            const payload = (await statusResp.json()) as { documents: StatusDocument[] }
+            items = (payload.documents ?? []).map((doc) => ({
+              pack_id: doc.document_id,
+              name: doc.label ?? doc.document_id,
+              document_ids: [doc.document_id],
+              namespaces: [doc.graph_namespace ?? doc.document_id],
+              counts: {
+                documents: 1,
+                claims_total: countFrom(doc.graph_counts, 'claims_total'),
+                entities_total: countFrom(doc.graph_counts, 'entities_total'),
+                persons_total: countFrom(doc.graph_counts, 'persons_total'),
+                events_total: countFrom(doc.graph_counts, 'events_total'),
+              },
+              data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'unavailable',
+              counts_data_source: sourceFrom(doc.graph_counts?.data_source) ?? 'unavailable',
+            }))
+          }
+        }
+        if (!cancelled) setPacks(items)
+      } catch {
+        if (!cancelled) setPacks([])
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 30000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  // Separate effect: auto-navigate to first real doc once packs load and selectRun is available
+  useEffect(() => {
+    if (!autoSelected.current && packs.length > 0 && selectRun && activeId.startsWith('doc_')) {
+      const initialDocId = packs[0]?.document_ids?.[0]
+      if (initialDocId) {
+        autoSelected.current = true
+        selectRun(initialDocId)
+      }
+    }
+  }, [packs, selectRun, activeId])
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((next) => !next)}
+        title={title}
+        className="max-w-full break-words text-left text-[13px] font-semibold leading-snug text-[var(--ink)] hover:text-[var(--accent)]"
+      >
+        Currently showing: {title} ▼
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-2 w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] shadow-lg">
+          {packs.map((pack) => {
+            const docId = pack.document_ids[0]
+            const countsSource = pack.counts_data_source ?? sourceFrom(pack.data_source) ?? 'unavailable'
+            return (
+              <button
+                type="button"
+                key={pack.pack_id}
+                onClick={() => {
+                  if (docId) {
+                    selectRun?.(docId)
+                    setOpen(false)
+                  }
+                }}
+                className={`grid w-full grid-cols-[1fr_auto] gap-3 border-b border-[var(--rule-soft)] px-3 py-2 text-left last:border-b-0 hover:bg-[var(--panel-dim)] ${
+                  docId === activeId ? 'bg-[var(--accent-soft)]' : ''
+                }`}
+              >
+                <div className="min-w-0">
+                  <span className="block break-words text-[12px] font-medium leading-snug text-[var(--ink)]" title={pack.name ?? pack.pack_id}>
+                    {pack.name ?? pack.pack_id}
+                  </span>
+                  <span className="font-mono text-[10.5px] text-[var(--ink-3)]">
+                    {countsSource === 'unavailable' && pack.counts.claims_total === 0
+                      ? 'claims unavailable'
+                      : `${pack.counts.claims_total.toLocaleString()} claims`}
+                    <SourceDot source={countsSource} show={nav?.showSources ?? false} />
+                  </span>
+                </div>
+                <span className="self-center font-mono text-[10px] text-[var(--ink-3)]">
+                  {pack.counts.documents} doc{pack.counts.documents !== 1 ? 's' : ''}
+                </span>
+              </button>
+            )
+          })}
+          {packs.length === 0 && <div className="px-3 py-2 text-[11.5px] text-[var(--ink-3)]">No packs found.</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function activityTarget(event: ActivityEvent): {
+  view: 'chronology' | 'entities' | 'people' | 'exec' | 'detailed'
+} | null {
+  if (event.type === 'ENTITY' || event.type === 'SWEEP') return { view: 'entities' }
+  if (event.type === 'SYNTHESIS' || event.type === 'REVIEW') {
+    const m = event.msg.toLowerCase()
+    return { view: m.includes('detailed') ? 'detailed' : 'exec' }
+  }
+  if (event.type === 'EXT') return { view: 'entities' }
+  if (event.type === 'CACHE' || event.type === 'RETRIEVAL') return null
+  if (event.type === 'CLAIM' || event.type === 'CONFLICT' || event.type === 'DECISION') {
+    const msg = event.msg
+    if (/^PERSON|Acting Secretary|Witness/i.test(msg)) return { view: 'people' }
+    if (/^CHRONOLOGY|OMCS|Settlement|Class action|date/i.test(msg)) return { view: 'chronology' }
+    if (/^ENTITY|Department|canonical/i.test(msg)) return { view: 'entities' }
+    if (/^AUTHORITY/i.test(msg)) return { view: 'chronology' }
+    if (/exec memo|critic/i.test(msg.toLowerCase())) return { view: 'exec' }
+    if (/settlement quantum|cf01/i.test(msg.toLowerCase())) return { view: 'chronology' }
+    return { view: 'chronology' }
+  }
+  return null
+}
+
+function KpiCell({ label, value, delta, tone, source = 'mock' }: { label: string; value: string; delta?: string; tone?: 'ok' | 'warn'; source?: DataSource }) {
+  const nav = useNav()
+  const toneClass = tone === 'ok' ? 'text-[var(--good)]' : tone === 'warn' ? 'text-[var(--warn)]' : 'text-[var(--ink)]'
+  return (
+    <div data-source-label={label} className="flex min-w-[122px] flex-col justify-center border-r border-[var(--rule)] px-4 py-3 last:border-r-0">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
+        {label}<SourceDot source={source} show={nav?.showSources ?? false} />
+      </div>
+      <div className={`font-mono text-[18px] font-semibold ${toneClass}`}>{value}</div>
+      {delta && <div className="font-mono text-[10.5px] text-[var(--ink-3)]">{delta}</div>}
+    </div>
+  )
+}
+
+function AgreementColumn({ label, item, source = 'mock' }: { label: string; item: AgreementItem; source?: DataSource }) {
+  const nav = useNav()
+  const ok = item.jaccard != null && item.jaccard >= item.gate
+  const unavailable = source === 'unavailable' && item.jaccard == null && item.claims === 0
+  return (
+    <div data-source-label={`Agreement ${label}`} className="border-r border-[var(--rule-soft)] px-4 py-3 last:border-r-0">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
+        {label}<SourceDot source={source} show={nav?.showSources ?? false} />
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="font-mono text-[20px] font-semibold text-[var(--ink)]">{item.jaccard != null ? item.jaccard.toFixed(2) : "n/a"}</span>
+        <span
+          className={`rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.04em] ${
+            ok ? 'bg-[var(--good-soft)] text-[var(--good)]' : 'bg-[var(--warn-soft)] text-[var(--warn)]'
+          }`}
+        >
+          {unavailable ? 'unavailable' : ok ? '>= gate' : 'iter'}
+        </span>
+      </div>
+      <div className="relative mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full ${ok ? 'bg-[var(--good)]' : 'bg-[var(--warn)]'}`}
+          style={{ width: `${(item.jaccard ?? 0) * 100}%` }}
+        />
+        <div className="absolute -top-0.5 h-2 w-px bg-[var(--ink-2)]" style={{ left: `${item.gate * 100}%` }} />
+      </div>
+      <div className="mt-2 flex justify-between font-mono text-[10px] text-[var(--ink-3)]">
+        <span>
+          {item.accepted}/{item.claims} accepted
+        </span>
+        <span>
+          {item.disputed} disp - {item.superseded} sup
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function ActivityLog({ data }: { data: WorkspaceData }) {
+  const nav = useNav()
+  const [filter, setFilter] = useState<ActivityFilter>('all')
+
+  const counts = {
+    all: data.activity.length,
+    conflicts: data.activity.filter((a) => a.type === 'CONFLICT').length,
+    decisions: data.activity.filter((a) => a.type === 'DECISION').length,
+    claims: data.activity.filter((a) => a.type === 'CLAIM').length,
+    entity: data.activity.filter((a) => a.type === 'ENTITY' || a.type === 'SWEEP').length,
+    synthesis: data.activity.filter((a) => a.type === 'SYNTHESIS' || a.type === 'REVIEW').length,
+    ext: data.activity.filter((a) => a.type === 'EXT').length,
+  }
+
+  const rows = data.activity.filter((a) => {
+    if (filter === 'all') return true
+    if (filter === 'conflicts') return a.type === 'CONFLICT'
+    if (filter === 'decisions') return a.type === 'DECISION'
+    if (filter === 'claims') return a.type === 'CLAIM'
+    if (filter === 'entity') return a.type === 'ENTITY' || a.type === 'SWEEP'
+    if (filter === 'synthesis') return a.type === 'SYNTHESIS' || a.type === 'REVIEW'
+    if (filter === 'ext') return a.type === 'EXT'
+    return true
+  })
+
+  return (
+    <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+      <div className="flex items-center justify-between border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">
+          Activity log - real events
+        </h3>
+        <div className="font-mono text-[10.5px] text-[var(--ink-3)]">
+          {rows.length === 0 ? 'No real activity events yet' : `${rows.length} real event${rows.length === 1 ? '' : 's'}`}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1 border-b border-[var(--rule)] bg-[var(--panel-dim)] px-2 pt-2">
+        {ACTIVITY_FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`mb-2 flex items-center gap-2 rounded border-b-2 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.04em] ${
+              filter === f
+                ? 'border-[var(--accent)] text-[var(--ink)]'
+                : 'border-transparent text-[var(--ink-3)] hover:text-[var(--ink-2)]'
+            }`}
+          >
+            {f}
+            <span
+              className={`rounded px-1.5 py-0.5 text-[9.5px] ${
+                filter === f ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+              }`}
+            >
+              {counts[f].toLocaleString()}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="max-h-[440px] overflow-y-auto font-mono text-[11.5px]">
+        {rows.length === 0 && (
+          <div className="border-b border-[var(--rule-soft)] px-4 py-5 text-[var(--ink-3)]">
+            No real activity events yet
+          </div>
+        )}
+        {rows.map((row, idx) => {
+          const target = activityTarget(row)
+          const clickable = Boolean(target && nav)
+          return (
+            <div
+              key={`${row.t}-${idx}`}
+              onClick={() => (clickable ? nav?.go(target!.view) : undefined)}
+              className={`grid grid-cols-[78px_22px_120px_90px_1fr] gap-3 border-b border-[var(--rule-soft)] px-4 py-2 last:border-b-0 ${
+                row.level === 'bad'
+                  ? 'bg-[#fcf1ee]'
+                  : row.level === 'warn'
+                    ? 'bg-[#fef8ec]'
+                    : ''
+              } ${clickable ? 'cursor-pointer hover:bg-[var(--panel-dim)]' : ''}`}
+            >
+              <span className="text-[var(--ink-3)]">{row.t}</span>
+              <span className="flex items-start justify-center">
+                <span
+                  className={`mt-1 h-2 w-2 rounded-full ${
+                    row.level === 'ok'
+                      ? 'bg-[#46a65e]'
+                      : row.level === 'warn'
+                        ? 'bg-[#dc9a3e]'
+                        : row.level === 'bad'
+                          ? 'bg-[#e36458]'
+                          : 'bg-[var(--ink-4)]'
+                  }`}
+                />
+              </span>
+              <span className="truncate text-[var(--ink-2)]">{row.src}</span>
+              <span
+                className={`w-fit rounded px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
+                  row.type === 'CLAIM'
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : row.type === 'DECISION'
+                      ? 'bg-[#efe5fb] text-[var(--lane-b)]'
+                      : row.type === 'CONFLICT'
+                        ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
+                        : row.type === 'ENTITY'
+                          ? 'bg-[var(--good-soft)] text-[var(--good)]'
+                          : row.type === 'SYNTHESIS'
+                            ? 'bg-[#fff2e0] text-[var(--warn)]'
+                            : row.type === 'EXT'
+                              ? 'bg-[#e5f1fa] text-[var(--accent)]'
+                              : row.type === 'REVIEW'
+                                ? 'bg-[var(--bad-soft)] text-[var(--bad)]'
+                                : 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+                }`}
+              >
+                {row.type}
+              </span>
+              <span className="text-[var(--ink)]">
+                {row.msg}
+                <SourceDot source={row.dataSource ?? 'mock'} show={nav?.showSources ?? false} />
+                <span className="mt-1 block text-[10.5px] text-[var(--ink-3)]">{row.detail}</span>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: WorkspaceData }) {
+  const nav = useNav()
+  const isReport = artifact.kind === 'report'
+  const reviewRoute = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
+  const unresolvedUpload = data.doc.docType === 'unresolved upload'
+  const loadedCount = isListArtifactId(artifact.id) ? loadedListCount(data, artifact.id) : 0
+  const runTotal = artifact.count ?? artifact.sections ?? 0
+  const displayTotal = isReport ? runTotal : loadedCount
+  const meterTotal = isReport ? runTotal : displayTotal
+  const safeMeterTotal = Math.max(1, meterTotal)
+  const accepted = artifact.accepted ?? 0
+  const disputed = artifact.disputed ?? 0
+  const superseded = artifact.superseded ?? 0
+  const hasRealArtifactRows = isReport ? (artifact.sections ?? 0) > 0 : loadedCount > 0
+  const artifactSource = unresolvedUpload || (reviewRoute && !hasRealArtifactRows)
+    ? 'unavailable'
+    : hasRealListRows(data, artifact.id)
+      ? 'real'
+      : 'mock'
+  const artifactUnavailable = artifactSource === 'unavailable'
+
+  const listItems = () => {
+    if (artifact.id === 'chronology') {
+      return data.chronology.slice(0, 5).map((item) => ({
+        id: item.id,
+        title: item.title,
+        meta: `${item.date} - p.${item.page}`,
+        conf: item.conf,
+        status: item.status,
+      }))
+    }
+    if (artifact.id === 'entities') {
+      return data.entities.slice(0, 5).map((item) => ({
+        id: item.id,
+        title: item.canonical,
+        meta: `${item.type.replace(/_/g, ' ').toLowerCase()} · ${item.mentions}×`,
+        conf: item.conf,
+        status: item.candidate ? 'candidate' : undefined,
+      }))
+    }
+    if (artifact.id === 'people') {
+      return data.people.slice(0, 5).map((item) => ({
+        id: item.id,
+        title: item.name,
+        meta: item.role,
+        conf: item.conf,
+        status: item.review ? 'review' : item.disputed ? 'disputed' : undefined,
+      }))
+    }
+    return []
+  }
+
+  return (
+    <div
+      className={`flex min-h-[220px] flex-col overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] ${
+        nav ? 'cursor-pointer transition hover:border-[var(--ink-4)] hover:shadow-md' : ''
+      }`}
+      onClick={() => (nav ? nav.go(artifact.id, undefined, 'all') : undefined)}
+    >
+      <div className="flex items-start justify-between gap-3 border-b border-[var(--rule-soft)] px-3 py-2">
+        <div className="min-w-0">
+          <div className={`font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--ink-3)] ${isReport ? 'text-[var(--warn)]' : ''}`}>
+            {isReport ? 'report' : 'list'}
+          </div>
+          <div className="truncate text-[13px] font-semibold text-[var(--ink)]">
+            {artifact.name}<SourceDot source={artifactSource} show={nav?.showSources ?? false} />
+          </div>
+        </div>
+        <span
+          className={`rounded px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.04em] ${
+            artifactUnavailable
+              ? 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+              : artifact.status === 'drafting'
+              ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
+              : artifact.status === 'gated'
+                ? 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+                : 'bg-[var(--accent-soft)] text-[var(--accent)]'
+          }`}
+        >
+          {artifactUnavailable ? 'unavailable' : artifact.status}
+        </span>
+      </div>
+      <div className="border-b border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2">
+        {artifactUnavailable ? (
+          <div className="font-mono text-[10.5px] text-[var(--ink-3)]">No real rows available yet.</div>
+        ) : isReport ? (
+          <div className="flex items-baseline justify-between font-mono text-[10.5px] text-[var(--ink-3)]">
+            <span>
+              <b className="text-[15px] text-[var(--ink)]">{artifact.drafted}</b>/{artifact.sections} drafted
+            </span>
+            <span>{artifact.critiqued} critic</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between font-mono text-[10.5px] text-[var(--ink-3)]">
+              <span>Agreement</span>
+              <b className="text-[15px] text-[var(--ink)]">{(artifact.agreement ?? 0).toFixed(2)}</b>
+            </div>
+            <div className="mt-1 flex items-baseline justify-between font-mono text-[10.5px] text-[var(--ink-3)]">
+              <span>
+                <b className="text-[15px] text-[var(--ink)]">{accepted}</b> accepted<SourceDot source={artifactSource} show={nav?.showSources ?? false} />
+              </span>
+              <span>
+                {disputed} disp · {superseded} sup
+              </span>
+            </div>
+          </>
+        )}
+        {!artifactUnavailable && !isReport && (
+          <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-[var(--rule-soft)]">
+            <div className="h-full bg-[var(--good)]" style={{ width: `${(accepted / safeMeterTotal) * 100}%` }} />
+            <div className="h-full bg-[var(--warn)]" style={{ width: `${(disputed / safeMeterTotal) * 100}%` }} />
+            <div className="h-full bg-[var(--ink-4)]" style={{ width: `${(superseded / safeMeterTotal) * 100}%` }} />
+          </div>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col gap-2 px-3 py-2 text-[11px]">
+        {artifactUnavailable
+          ? <div className="text-[var(--ink-3)]">Backend data unavailable for this artifact.</div>
+          : isReport && artifact.outline
+          ? artifact.outline.slice(0, 5).map((row) => (
+              <div key={row.h} className="flex items-center justify-between gap-2 border-b border-dashed border-[var(--rule-soft)] pb-2 last:border-b-0">
+                <div className="min-w-0 truncate text-[var(--ink)]">{row.h}</div>
+                <span
+                  className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.04em] ${
+                    row.state === 'drafted'
+                      ? 'bg-[var(--good-soft)] text-[var(--good)]'
+                      : row.state === 'drafting'
+                        ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
+                        : 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+                  }`}
+                >
+                  {row.state}
+                </span>
+              </div>
+            ))
+          : listItems().map((row) => (
+              <div key={row.id} className="flex items-start justify-between gap-3 border-b border-dashed border-[var(--rule-soft)] pb-2 last:border-b-0">
+                <div className="min-w-0">
+                  <div className={`truncate text-[11px] ${row.status === 'superseded' ? 'line-through text-[var(--ink-3)]' : 'text-[var(--ink)]'}`}>
+                    {row.title}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 font-mono text-[9.5px] text-[var(--ink-3)]">
+                    <span>{row.meta}</span>
+                    {row.status && (
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.04em] ${
+                          row.status === 'disputed'
+                            ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
+                            : row.status === 'human_review' || row.status === 'review'
+                              ? 'bg-[var(--bad-soft)] text-[var(--bad)]'
+                              : row.status === 'superseded'
+                                ? 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+                              : row.status === 'candidate'
+                                ? 'bg-[#f1ecfa] text-[var(--lane-b)]'
+                              : 'bg-[var(--good-soft)] text-[var(--good)]'
+                        }`}
+                      >
+                        {row.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div
+                  className={`font-mono text-[9.5px] ${
+                    row.conf < 0.6 ? 'text-[var(--bad)]' : row.conf < 0.8 ? 'text-[var(--warn)]' : 'text-[var(--ink-2)]'
+                  }`}
+                >
+                  {row.conf.toFixed(2)}
+                </div>
+              </div>
+            ))}
+      </div>
+      <div
+        className="flex items-center justify-between border-t border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2 font-mono text-[10px] text-[var(--ink-3)]"
+        onClick={(e) => {
+          e.stopPropagation()
+          if (nav) nav.go(artifact.id, undefined, 'all')
+        }}
+      >
+        <span>{artifactUnavailable ? 'backend data unavailable' : `updated ${artifact.lastUpdate}`}</span>
+        <span className="cursor-pointer font-semibold text-[var(--accent)] hover:underline">
+          {artifactUnavailable ? 'Open' : `View all ${displayTotal.toLocaleString()} →`}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export function LatticeDashboard({ data }: LatticeDashboardProps) {
+  const nav = useNav()
+  const showSources = nav?.showSources ?? false
+  const reviewRoute = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
+  const unresolvedUpload = data.doc.docType === 'unresolved upload'
+  const docSource: DataSource = data.isRealData ? 'real' : unresolvedUpload ? 'unavailable' : 'mock'
+  const claimsSource = data.kpi.claimsTotalSource ?? 'unavailable'
+  const conflictsSource = data.kpi.openConflictsSource ?? 'unavailable'
+  const humanQueueSource = data.kpi.humanQueueSource ?? 'unavailable'
+  const externalSourceCounts = data.augmentation.externalSourcesBySource
+  const eyeciteCount = externalSourceCount(externalSourceCounts, 'eyecite')
+  const austliiCount = externalSourceCount(externalSourceCounts, 'austlii')
+  const asicCount = externalSourceCount(externalSourceCounts, 'asic')
+  const companiesHouseCount = externalSourceCount(externalSourceCounts, 'companies_house')
+  const courtListenerCount = externalSourceCount(externalSourceCounts, 'courtlistener')
+  const edgarCount = externalSourceCount(externalSourceCounts, 'edgar')
+  return (
+    <div className="theme-lattice min-h-screen bg-[var(--bg)] text-[var(--ink)]">
+      <div className="flex flex-wrap border-b border-[var(--rule)] bg-[var(--panel)]">
+        <div className="flex min-w-[320px] flex-wrap items-center gap-2 border-r border-[var(--rule)] px-4 py-3 font-semibold">
+          <div className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--accent)] to-[var(--lane-b)] text-[10px] font-bold uppercase text-white">
+            LA
+          </div>
+          <div className="text-[13px]">legal-ai · operator</div>
+          <button
+            type="button"
+            onClick={() => nav?.toggleSources()}
+            className={`ml-1 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] ${
+              showSources
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                : 'border-[var(--rule)] text-[var(--ink-3)]'
+            }`}
+          >
+            Sources<SourceDot source="real" show />
+          </button>
+          <a
+            href={reviewHref(data.doc.id)}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('monitor')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Operator review
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'chronology')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('chronology')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Lawyer review
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'evidence')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('evidence')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Evidence graph
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'ask')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('ask')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Ask
+          </a>
+        </div>
+        <div className="flex min-w-[220px] flex-1 flex-col justify-center border-r border-[var(--rule)] px-4 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Active run</div>
+          <DocumentPicker activeId={data.doc.id} title={data.doc.title} />
+          <div className="break-words font-mono text-[11px] leading-snug text-[var(--ink-3)]" title={`${data.doc.id} · ${data.doc.pages.toLocaleString()}pp · ${data.doc.docType}`}>
+            {data.doc.id} · {data.doc.pages.toLocaleString()}pp · {data.doc.docType.toLowerCase().replace(/_/g, ' ')}
+            <SourceDot source={docSource} show={showSources} /> ·{' '}
+            {data.doc.jurisdiction}
+          </div>
+          {reviewRoute && (
+            <div className="mt-2">
+              <ReviewDocumentControls />
+            </div>
+          )}
+        </div>
+        {!reviewRoute && (
+          <KpiCell
+            label="Time"
+            value={`${data.doc.elapsedHours.toFixed(1)}h`}
+            delta={`of ${data.doc.timeBudgetHours}h · ${((data.doc.elapsedHours / data.doc.timeBudgetHours) * 100).toFixed(0)}%`}
+          />
+        )}
+        <KpiCell
+          label="Claims"
+          value={claimsSource === 'real' ? data.kpi.claimsTotal.toLocaleString() : 'unavailable'}
+          source={claimsSource}
+        />
+        <KpiCell
+          label="Conflicts"
+          value={conflictsSource === 'real' ? String(data.kpi.openConflicts) : 'unavailable'}
+          tone="warn"
+          source={conflictsSource}
+        />
+        <KpiCell
+          label="Human queue"
+          value={humanQueueSource === 'real' ? String(data.kpi.humanQueue) : 'unavailable'}
+          tone="warn"
+          source={humanQueueSource}
+        />
+        {!reviewRoute && (
+          <>
+            <KpiCell label="SGLang cache" value={`${Math.round(data.kpi.cacheHitRate * 100)}%`} tone="ok" delta="↑ vs 30% floor" source="simulated" />
+            <KpiCell label="Workflow" value="OK" tone="ok" delta="0 retries · Temporal" />
+          </>
+        )}
+      </div>
+
+      <div className="space-y-5 px-6 py-5">
+        {unresolvedUpload && (
+          <div className="rounded-lg border border-[var(--warn)] bg-[var(--warn-soft)] px-4 py-3 text-[13px] text-[var(--ink)]" role="status">
+            Unable to resolve upload id to a backend document. No real review data is available for {data.doc.id}.
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-8">
+            <div className="overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+              <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Pipelines</h3>
+              </div>
+              <table className="w-full text-[11.5px]">
+                <thead className="bg-[var(--panel-dim)] text-[9.5px] uppercase tracking-[0.08em] text-[var(--ink-3)]">
+                  <tr>
+                    <th className="px-3 py-2 text-left">ID</th>
+                    <th className="px-3 py-2 text-left">Pipeline</th>
+                    <th className="px-3 py-2 text-left">Status</th>
+                    <th className="px-3 py-2 text-left">Progress</th>
+                    <th className="px-3 py-2 text-right">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.pipelines.map((pipe) => (
+                    <tr key={pipe.id} className="border-b border-[var(--rule-soft)] last:border-b-0">
+                      <td className="px-3 py-2 font-mono text-[var(--ink-3)]">P{pipe.id}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-[var(--ink)]">
+                          {pipe.name}<SourceDot source={pipe.statusSource ?? 'mock'} show={showSources} />
+                        </div>
+                        <div className="text-[10px] text-[var(--ink-3)]">{pipe.detail}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`rounded px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.06em] ${
+                            pipe.status === 'running'
+                              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : pipe.status === 'done'
+                                ? 'bg-[var(--good-soft)] text-[var(--good)]'
+                                : 'bg-[var(--rule-soft)] text-[var(--ink-3)]'
+                          }`}
+                        >
+                          {pipe.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="h-1.5 w-24 overflow-hidden rounded-full bg-[var(--rule-soft)]">
+                          <div
+                            className={`${pipe.status === 'done' ? 'bg-[var(--good)]' : pipe.status === 'queued' ? 'bg-[var(--ink-4)]' : 'bg-[var(--accent)]'} h-full`}
+                            style={{ width: `${pipe.progress * 100}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-[var(--ink)]">
+                        {(pipe.progress * 100).toFixed(0)}%<SourceDot source={pipe.progressSource ?? 'mock'} show={showSources} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="space-y-4 lg:col-span-4">
+            <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+              <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Agreement</h3>
+              </div>
+              <div className="grid grid-cols-1 gap-0 sm:grid-cols-3">
+                <AgreementColumn label="Chronology" item={data.agreement.chronology} source={data.agreement.chronology.jaccardSource ?? data.agreement.chronology.claimsSource ?? 'mock'} />
+                <AgreementColumn label="People" item={data.agreement.person} source={data.agreement.person.jaccardSource ?? data.agreement.person.claimsSource ?? 'mock'} />
+                <AgreementColumn label="Entity" item={data.agreement.entity} source={data.agreement.entity.jaccardSource ?? data.agreement.entity.claimsSource ?? 'mock'} />
+              </div>
+            </div>
+            {!reviewRoute && (
+            <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+              <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Time budget</h3>
+              </div>
+              <div className="flex items-center gap-4 px-4 py-3">
+                <div className="font-mono text-[18px] font-semibold text-[var(--ink)]">
+                  {data.doc.elapsedHours.toFixed(1)}
+                  <span className="ml-1 text-[11px] font-normal text-[var(--ink-3)]">of {data.doc.timeBudgetHours}h</span>
+                </div>
+                <div className="flex-1">
+                  <div className="h-2 overflow-hidden rounded-full bg-[var(--rule-soft)]">
+                    <div
+                      className="h-full bg-[var(--accent)]"
+                      style={{ width: `${(data.doc.elapsedHours / data.doc.timeBudgetHours) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="font-mono text-[11px] text-[var(--ink-3)]">eta 8.6h</div>
+              </div>
+            </div>
+            )}
+          </div>
+        </div>
+
+        <ActivityLog data={data} />
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+          {data.artifacts.map((artifact) => (
+            <ArtifactCard key={artifact.id} artifact={artifact} data={data} />
+          ))}
+          <button
+            type="button"
+            onClick={() => nav?.go('evidence')}
+            className="flex flex-col justify-between overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] text-left hover:bg-[var(--bg)]"
+          >
+            <div className="flex-1 p-4">
+              <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-3)]">Evidence</div>
+              <div className="mt-2 font-serif text-[17px] font-medium text-[var(--ink)]">Relationship graph</div>
+              <div className="mt-2 text-[11.5px] leading-relaxed text-[var(--ink-2)]">Entity relationships from the evidence graph</div>
+            </div>
+            <div className="flex items-center justify-end border-t border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2 font-mono text-[10px] text-[var(--accent)] hover:underline">
+              View graph →
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => nav?.go('ask')}
+            className="flex flex-col justify-between overflow-hidden rounded-lg border border-[var(--rule)] bg-[var(--panel)] text-left hover:bg-[var(--bg)]"
+          >
+            <div className="flex-1 p-4">
+              <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-3)]">Ask</div>
+              <div className="mt-2 font-serif text-[17px] font-medium text-[var(--ink)]">Ask the evidence</div>
+              <div className="mt-2 text-[11.5px] leading-relaxed text-[var(--ink-2)]">
+                Natural-language queries grounded in the evidence graph
+              </div>
+            </div>
+            <div className="flex items-center justify-end border-t border-[var(--rule-soft)] bg-[var(--panel-dim)] px-3 py-2 font-mono text-[10px] text-[var(--accent)] hover:underline">
+              Ask a question →
+            </div>
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+          <div className="border-b border-[var(--rule)] bg-[#fff8ec] px-4 py-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--warn)]">Conflict viewer</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-2">
+            {data.conflicts.map((conflict) => (
+              <div key={conflict.id} className="overflow-hidden rounded-lg border border-[var(--rule)]">
+                <div className="flex items-center gap-3 border-b border-[var(--rule-soft)] bg-[#fff8ec] px-4 py-2">
+                  <span className="rounded bg-[var(--warn-soft)] px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--warn)]">
+                    {conflict.id}
+                  </span>
+                  <span className="flex-1 truncate text-[12px] font-semibold text-[var(--ink)]">{conflict.subject}</span>
+                  <span className="font-mono text-[10.5px] text-[var(--warn)]">J {conflict.jaccard.toFixed(2)}</span>
+                </div>
+                <div className="grid grid-cols-1 border-b border-[var(--rule-soft)] md:grid-cols-3">
+                  {conflict.claims.map((claim) => (
+                    <div key={claim.lane} className="border-r border-[var(--rule-soft)] p-3 last:border-r-0">
+                      <div
+                        className={`mb-2 inline-flex items-center gap-2 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
+                          claim.lane === 'structural'
+                            ? 'text-[var(--lane-a)]'
+                            : claim.lane === 'hybrid'
+                              ? 'text-[var(--lane-b)]'
+                              : 'text-[var(--lane-c)]'
+                        }`}
+                      >
+                        <span className={`h-2 w-2 rounded ${claim.lane === 'structural' ? 'bg-[var(--lane-a)]' : claim.lane === 'hybrid' ? 'bg-[var(--lane-b)]' : 'bg-[var(--lane-c)]'}`} />
+                        {claim.lane}
+                      </div>
+                      <div className="font-mono text-[12.5px] font-semibold text-[var(--ink)]">{claim.value}</div>
+                      <div className="mt-1 font-mono text-[10px] text-[var(--ink-3)]">{claim.source}</div>
+                      <div className="mt-2 rounded border-l-2 border-current bg-[var(--panel-dim)] px-2 py-1 text-[10.5px] text-[var(--ink-2)]">
+                        {claim.evidence}
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 font-mono text-[10px] text-[var(--ink-2)]">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--rule-soft)]">
+                          <div
+                            className={`h-full ${claim.lane === 'structural' ? 'bg-[var(--lane-a)]' : claim.lane === 'hybrid' ? 'bg-[var(--lane-b)]' : 'bg-[var(--lane-c)]'}`}
+                            style={{ width: `${claim.conf * 100}%` }}
+                          />
+                        </div>
+                        <span>{claim.conf.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-3 bg-[var(--panel-dim)] px-4 py-3">
+                  <div className="flex-1 text-[10.5px] text-[var(--ink-2)]">
+                    {conflict.authority ? (
+                      <>
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--accent)]">Rule</span>{' '}
+                        {conflict.authority}
+                      </>
+                    ) : (
+                      'Awaiting arbiter'
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded border border-[var(--rule)] bg-[var(--panel)] px-2 py-1 text-[10.5px] font-semibold text-[var(--ink-2)]"
+                      onClick={() =>
+                        nav?.go(
+                          conflict.artifact === 'person'
+                            ? 'people'
+                            : conflict.artifact === 'entity'
+                              ? 'entities'
+                              : 'chronology'
+                        )
+                      }
+                    >
+                      Open in {conflict.artifact === 'person' ? 'people' : conflict.artifact === 'entity' ? 'entities' : 'chronology'}
+                    </button>
+                    <button className="rounded border border-[var(--rule)] bg-[var(--panel)] px-2 py-1 text-[10.5px] font-semibold text-[var(--ink-2)]">
+                      Re-pass
+                    </button>
+                    <button className="rounded border border-[var(--bad-soft)] px-2 py-1 text-[10.5px] font-semibold text-[var(--bad)]">
+                      Escalate
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+            <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Signals</h3>
+            </div>
+            {data.signals.map((signal) => (
+              <div
+                key={`${signal.type}-${signal.t}`}
+                className="grid cursor-pointer grid-cols-[48px_1fr] gap-3 border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] last:border-b-0 hover:bg-[var(--panel-dim)]"
+                onClick={() => nav?.go(signal.target.view, signal.target.id)}
+              >
+                <div className="font-mono text-[10.5px] text-[var(--ink-3)]">{signal.t}</div>
+                <div>
+                  <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--accent)]">
+                    {signal.type.replace(/_/g, ' ')}
+                  </div>
+                  <div className="text-[var(--ink)]">{signal.payload}</div>
+                  <div className="mt-1 font-mono text-[10px] text-[var(--ink-3)]">{signal.impact}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+            <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">External</h3>
+            </div>
+            <div className="space-y-0">
+              <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    eyecite
+                  </span>
+                  citations tagged<SourceDot source={sourceCountKind(eyeciteCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">{sourceCountText(eyeciteCount)}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    AustLII
+                  </span>
+                  statutes verified<SourceDot source={sourceCountKind(austliiCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">
+                  {sourceCountText(austliiCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    ASIC
+                  </span>
+                  entities confirmed<SourceDot source={sourceCountKind(asicCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">
+                  {sourceCountText(asicCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    Cos House
+                  </span>
+                  UK entities<SourceDot source={sourceCountKind(companiesHouseCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">
+                  {sourceCountText(companiesHouseCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--rule-soft)] px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    EDGAR
+                  </span>
+                  US filings<SourceDot source={sourceCountKind(edgarCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">
+                  {sourceCountText(edgarCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-4 py-3 text-[11.5px] text-[var(--ink-2)]">
+                <span className="flex items-center gap-2">
+                  <span className="rounded bg-[var(--rule-soft)] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-[var(--ink-3)]">
+                    CourtListener
+                  </span>
+                  US case law<SourceDot source={sourceCountKind(courtListenerCount)} show={showSources} />
+                </span>
+                <span className="font-mono font-semibold text-[var(--ink)]">
+                  {sourceCountText(courtListenerCount)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
+            <div className="border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">Hardware</h3>
+            </div>
+            <div className="grid grid-cols-2">
+              {data.fleet
+                ? data.fleet.hosts.map((host) => {
+                    const label = host.display_name || host.name
+                    const configuredModel = host.configured_model || host.model || 'configured model unknown'
+                    const actualModel = host.actual_model || 'actual model unknown'
+                    const source = sourceFrom(data.fleet?.data_source) ?? 'real'
+                    return (
+                      <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
+                        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
+                          {label}
+                          {!host.up && <span className="ml-1 text-[var(--bad)]">unreachable</span>}
+                          <SourceDot source={source} show={showSources} />
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">
+                          configured: {configuredModel}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-[var(--ink-3)]">
+                          actual: {actualModel}
+                        </div>
+                        {host.up ? (
+                          <>
+                            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px] text-[var(--ink)]">
+                              <span>{host.running != null ? host.running : '—'} running</span>
+                              <span>{host.waiting != null ? host.waiting : '—'} waiting</span>
+                              <span>
+                                {host.generation_tokens_total != null
+                                  ? `${host.generation_tokens_total.toLocaleString()} gen tokens`
+                                  : 'tokens unavailable'}
+                              </span>
+                            </div>
+                            {host.gpu_cache_pct != null && (
+                              <div className="mt-2">
+                                <div className="mb-0.5 flex justify-between font-mono text-[9px] text-[var(--ink-3)]">
+                                  <span>GPU cache</span>
+                                  <span>{host.gpu_cache_pct}%</span>
+                                </div>
+                                <div className="h-1 rounded-full bg-[var(--rule-soft)]">
+                                  <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${host.gpu_cache_pct}%` }} />
+                                </div>
+                              </div>
+                            )}
+                            {host.gpu_cache_pct == null && (
+                              <div className="mt-1 font-mono text-[10px] text-[var(--ink-3)]">GPU cache unavailable</div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="mt-1 font-mono text-[11px] text-[var(--ink-3)]">
+                            {host.unavailable_reason || 'metrics unavailable'}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                : reviewRoute ? (
+                  <div className="col-span-2 px-4 py-5 text-[11.5px] text-[var(--ink-3)]">
+                    Hardware telemetry unavailable from `/api/fleet`.
+                  </div>
+                ) : data.hardware.hosts.map((host) => {
+                    const util = host.vramPct ?? host.ramPct ?? 0
+                    const utilLabel = host.vramPct != null ? 'VRAM' : 'RAM'
+                    return (
+                      <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
+                        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
+                          {host.label}<SourceDot source="mock" show={showSources} />
+                        </div>
+                        <div className="mt-1 flex items-baseline gap-2 font-mono text-[12px] text-[var(--ink)]">
+                          <span className="font-semibold">{util}%</span>
+                          <span className="text-[10px] text-[var(--ink-3)]">{utilLabel}</span>
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">{host.role}</div>
+                        <div className="mt-2 h-1 rounded-full bg-[var(--rule-soft)]">
+                          <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${util}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
