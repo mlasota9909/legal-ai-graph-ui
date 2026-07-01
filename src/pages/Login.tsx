@@ -7,7 +7,7 @@ const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -26,7 +26,7 @@ export function Login() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ username, password }),
       })
       if (response.ok) {
         const data = (await response.json()) as { token?: string }
@@ -68,15 +68,15 @@ export function Login() {
         <form className="mt-6 space-y-5" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
             <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">
-              Email
+              Username
             </span>
             <input
-              type="email"
-              autoComplete="email"
+              type="text"
+              autoComplete="username"
               required
               disabled={AUTH_DISABLED || loading}
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
               className="w-full border border-[var(--rule)] bg-[var(--bg)] px-3 py-2 font-mono text-[13px] text-[var(--ink)] outline-none focus:border-[var(--accent)] disabled:opacity-60"
             />
           </label>

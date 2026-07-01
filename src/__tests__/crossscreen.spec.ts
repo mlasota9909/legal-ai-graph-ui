@@ -1875,17 +1875,17 @@ test('static lawyer export actions show explicit unavailable state', async ({ pa
   }
 })
 
-test('login page renders with email and password fields', async ({ page }) => {
+test('login page renders with username and password fields', async ({ page }) => {
   await page.goto('/login')
 
   // Auth is disabled in dev mode (VITE_AUTH_DISABLED=true) so the form
   // renders synchronously, then a 1s timer redirects to '/'.
   // Assert the form elements are visible within that window.
-  const emailInput = page.locator('input[type="email"]')
+  const usernameInput = page.locator('input[autocomplete="username"]')
   const passwordInput = page.locator('input[type="password"]')
   const submitButton = page.locator('button[type="submit"]')
 
-  await expect(emailInput).toBeVisible({ timeout: 3000 })
+  await expect(usernameInput).toBeVisible({ timeout: 3000 })
   await expect(passwordInput).toBeVisible({ timeout: 3000 })
   await expect(submitButton).toBeVisible({ timeout: 3000 })
 })
