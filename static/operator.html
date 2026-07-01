@@ -188,6 +188,7 @@
           const status = String(row.status || row.state || '').toLowerCase();
           let ok = null;
           if (typeof row.ok === 'boolean') ok = row.ok;
+          else if (typeof row.up === 'boolean') ok = row.up;
           else if (typeof row.available === 'boolean') ok = row.available;
           else if (status) {
             ok = /^(ok|up|online|healthy|ready|running|available)$/.test(status)
@@ -197,14 +198,14 @@
                 : null;
           }
           acc[id] = {
-            label: row.label || row.name || row.host || id,
-            model: row.model || row.model_name || row.configured_model || row.backend_model || '',
+            label: row.display_name || row.label || row.name || row.host || id,
+            model: row.actual_model || row.configured_model || row.model || row.model_name || row.backend_model || '',
             role: row.role || row.kind || 'inference',
             ok: ok,
-            status: row.status || row.state || '',
+            status: row.unavailable_reason || row.status || row.state || '',
             running: firstNumber([row.running, row.requests_running, row.active_requests, row.active]),
             waiting: firstNumber([row.waiting, row.queue_depth, row.pending_requests, row.pending]),
-            kv_cache_pct: firstNumber([row.kv_cache_pct, row.kv_cache_percent, row.kv_percent]),
+            kv_cache_pct: firstNumber([row.gpu_cache_pct, row.kv_cache_pct, row.kv_cache_percent, row.kv_percent]),
             generation_tokens_total: firstNumber([row.generation_tokens_total, row.generated_tokens_total, row.tokens_generated_total]),
             prefix_cache_hit_rate: firstNumber([row.prefix_cache_hit_rate, row.prefix_hit_rate]),
           };

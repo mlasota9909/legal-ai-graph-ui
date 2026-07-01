@@ -1342,6 +1342,7 @@ function LatticeDashboard() {
   const fleetWaiting = waitingValues.reduce((s, v) => s + v, 0);
   const fleetGenKnown = tokenValues.length > 0;
   const fleetGenTotal = tokenValues.reduce((s, v) => s + v, 0);
+  const fleetGenHosts = tokenValues.length === 1 ? '1 host' : `${tokenValues.length} hosts`;
 
   // Agreement data from breakdown
   const makeAgree = (type) => {
@@ -1527,7 +1528,7 @@ function LatticeDashboard() {
         <LKpi label="Entities" value={(claimsData.entities||0).toString()} delta="canonical registry v2" />
         <LKpi label="References" value={((claimsData.internal_refs||0)+(claimsData.external_refs||0)).toString()} delta={`${claimsData.internal_refs||0} int · ${claimsData.external_refs||0} ext`} />
         <LKpi label="Fleet KV" value={fleetKvKnown ? fleetKv.toFixed(1)+'%' : '—'} tone={fleetKvKnown && fleetKv > 50 ? 'warn' : (fleetKvKnown ? 'ok' : '')} delta={fleetRunningKnown || fleetWaitingKnown ? `${fleetRunningKnown ? fleetRunning : '—'} running · ${fleetWaitingKnown ? fleetWaiting : '—'} waiting` : 'telemetry unavailable'} />
-        <LKpi label="Gen Tokens" value={fleetGenKnown ? fmtTokens(fleetGenTotal) : '—'} delta={fleetGenKnown ? `${hardwareEntries.length} hosts` : 'token telemetry unavailable'} />
+        <LKpi label="Gen Tokens" value={fleetGenKnown ? fmtTokens(fleetGenTotal) : '—'} delta={fleetGenKnown ? fleetGenHosts : 'token telemetry unavailable'} />
         <LKpi label="Pipeline" value={`${doneStages}/${pipeline.length}`} tone={doneStages === pipeline.length && pipeline.length > 0 ? 'ok' : ''} delta={doc.status || 'unknown'} />
       </div>
 

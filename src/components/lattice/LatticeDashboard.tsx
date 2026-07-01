@@ -889,19 +889,33 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
             <div className="grid grid-cols-2">
               {data.fleet
                 ? data.fleet.hosts.map((host) => {
+                    const label = host.display_name || host.name
+                    const configuredModel = host.configured_model || host.model || 'configured model unknown'
+                    const actualModel = host.actual_model || 'actual model unknown'
+                    const source = sourceFrom(data.fleet?.data_source) ?? 'real'
                     return (
                       <div key={host.name} className="border-b border-r border-[var(--rule-soft)] p-3 last:border-r-0">
                         <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--ink-3)]">
-                          {host.name}
-                          {!host.up && <span className="ml-1 text-[var(--bad)]">down</span>}
-                          <SourceDot source="real" show={showSources} />
+                          {label}
+                          {!host.up && <span className="ml-1 text-[var(--bad)]">unreachable</span>}
+                          <SourceDot source={source} show={showSources} />
                         </div>
-                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">{host.model}</div>
+                        <div className="mt-1 text-[10px] text-[var(--ink-3)]">
+                          configured: {configuredModel}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-[var(--ink-3)]">
+                          actual: {actualModel}
+                        </div>
                         {host.up ? (
                           <>
                             <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px] text-[var(--ink)]">
-                              {host.running != null && <span>{host.running} running</span>}
-                              {host.waiting != null && <span>{host.waiting} waiting</span>}
+                              <span>{host.running != null ? host.running : '—'} running</span>
+                              <span>{host.waiting != null ? host.waiting : '—'} waiting</span>
+                              <span>
+                                {host.generation_tokens_total != null
+                                  ? `${host.generation_tokens_total.toLocaleString()} gen tokens`
+                                  : 'tokens unavailable'}
+                              </span>
                             </div>
                             {host.gpu_cache_pct != null && (
                               <div className="mt-2">
@@ -914,9 +928,14 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
                                 </div>
                               </div>
                             )}
+                            {host.gpu_cache_pct == null && (
+                              <div className="mt-1 font-mono text-[10px] text-[var(--ink-3)]">GPU cache unavailable</div>
+                            )}
                           </>
                         ) : (
-                          <div className="mt-1 font-mono text-[11px] text-[var(--ink-3)]">—</div>
+                          <div className="mt-1 font-mono text-[11px] text-[var(--ink-3)]">
+                            {host.unavailable_reason || 'metrics unavailable'}
+                          </div>
                         )}
                       </div>
                     )

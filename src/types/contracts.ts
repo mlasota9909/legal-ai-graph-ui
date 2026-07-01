@@ -503,12 +503,18 @@ export interface PipelineResponse {
 
 export interface FleetHost {
   name: string
+  display_name?: string | null
   base_url: string
   model: string
+  configured_model?: string | null
+  actual_model?: string | null
   up: boolean
   running: number | null
   waiting: number | null
   gpu_cache_pct: number | null
+  generation_tokens_total?: number | null
+  updated_at?: string | null
+  unavailable_reason?: string | null
 }
 
 export interface FleetResponse {

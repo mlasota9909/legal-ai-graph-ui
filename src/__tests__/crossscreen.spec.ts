@@ -325,7 +325,7 @@ async function mockEvidencePanelDocument(
       contentType: 'application/json',
       body: JSON.stringify({
         data_source: 'real',
-        workers: [],
+        hosts: [],
       }),
     })
   })
@@ -1087,21 +1087,34 @@ async function mockStaticOperatorApi(page: Page, overrides: Record<string, unkno
       contentType: 'application/json',
       body: JSON.stringify({
         data_source: 'real',
-        workers: [
+        hosts: [
           {
-            id: 'alienware',
-            label: 'Alienware',
-            model: 'alienware-qwen36-35b',
-            ok: false,
+            name: 'alienware',
+            display_name: 'Alienware',
+            base_url: 'http://alienware:8010',
+            model: 'qwen36-35b-a3b-gptq',
+            configured_model: 'qwen36-35b-a3b-gptq',
+            actual_model: null,
+            up: false,
             role: 'query model',
+            running: null,
+            waiting: null,
+            gpu_cache_pct: null,
+            generation_tokens_total: null,
+            unavailable_reason: 'metrics_unreachable',
           },
           {
-            id: 'gb10a',
-            label: 'GB10A',
-            model: 'gb10a-qwen35-122b',
-            ok: true,
+            name: 'gb10a',
+            display_name: 'GB10A',
+            base_url: 'http://gb10a:8000',
+            model: 'qwen',
+            configured_model: 'qwen',
+            actual_model: 'qwen',
+            up: true,
             running: 1,
             waiting: 0,
+            gpu_cache_pct: 12,
+            generation_tokens_total: 120000,
           },
         ],
       }),
@@ -1439,7 +1452,10 @@ test('static operator shows honest pipeline counters and fleet unavailable state
   await expect(page.locator('tr', { hasText: 'Parse/OCR' })).toContainText('No detail')
   await expect(page.getByText(/Alienware.*unreachable/)).toBeVisible()
   await expect(page.getByText(/tokens unavailable/).first()).toBeVisible()
-  await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('token telemetry unavailable')
+  await expect(page.locator('.l-hw-cell').filter({ hasText: 'GB10A' })).toContainText(/tokens total/)
+  await expect(page.locator('.l-hw-cell').filter({ hasText: 'Alienware' })).toContainText(/tokens unavailable/)
+  await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('120k')
+  await expect(page.locator('.l-kpi').filter({ hasText: 'Gen Tokens' })).toContainText('1 host')
 })
 
 test('static operator browser back stays in operator context after pipeline drill-down', async ({ page }) => {
