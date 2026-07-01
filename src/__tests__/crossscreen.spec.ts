@@ -2184,7 +2184,7 @@ test('AskPanel renders empty real query response without fabricating an answer',
   await expect(
     page.getByText('No answer could be produced from the retrieved evidence for this question.')
   ).toBeVisible({ timeout: 10000 })
-  await expect(page.locator('[title="real data"]')).toBeVisible()
+  await expect(page.locator('header [title="real data"]')).toBeVisible()
   await expect(page.locator('[title="mock data"]')).toHaveCount(0)
   await expect(page.locator('main section p.font-serif')).toHaveCount(0)
 })
