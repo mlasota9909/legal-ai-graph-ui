@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { activitySeed, mockData, runKpiSeed } from '../data/mockData'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { mockData, runKpiSeed } from '../data/mockData'
 import type {
   ActivityEvent,
   ActivityStreamResponse,
@@ -13,7 +13,6 @@ import type {
   RegisterResponse,
   RegisterRow,
   RegisterType,
-  RunKpi,
   SummaryResponse,
   WorkspaceData,
 } from '../types/contracts'
@@ -31,6 +30,8 @@ const VIEW_SEGMENTS: Record<string, ArtifactView> = {
   evidence: 'evidence',
   ask: 'ask',
 }
+
+const KNOWN_BACKEND_DOC_IDS = ['original_royalcomm', 'volume_10', 'romancath', 'tanyaday', 'hopper']
 
 interface RouteState {
   docId: string
@@ -100,10 +101,35 @@ function parseView(pathname: string): ArtifactView {
   return VIEW_SEGMENTS[seg] ?? 'monitor'
 }
 
+function isReviewRoute(): boolean {
+  return window.location.pathname.split('/').filter(Boolean)[0] === 'runs'
+}
+
+function normalizeReviewDocumentId(value: string): string {
+  const decoded = decodeURIComponent(value || mockData.doc.id)
+  if (KNOWN_BACKEND_DOC_IDS.includes(decoded)) return decoded
+
+  const lower = decoded.toLowerCase()
+  const match = [...KNOWN_BACKEND_DOC_IDS]
+    .sort((a, b) => b.length - a.length)
+    .find((id) => lower === id || lower.includes(id))
+
+  return match ?? decoded
+}
+
+function titleFromDocId(docId: string): string {
+  return docId
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 function parseRoute(defaultDocId: string): RouteState {
   const parts = window.location.pathname.split('/').filter(Boolean)
+  const rawDocId = parts[0] === 'runs' && parts[1] ? decodeURIComponent(parts[1]) : defaultDocId
   return {
-    docId: parts[0] === 'runs' && parts[1] ? decodeURIComponent(parts[1]) : defaultDocId,
+    docId: normalizeReviewDocumentId(rawDocId),
     view: parseView(window.location.pathname),
   }
 }
@@ -114,15 +140,8 @@ function viewToPath(docId: string, view: ArtifactView): string {
   return `/runs/${encoded}/${view}`
 }
 
-function formatTime(date = new Date()): string {
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-  const ss = String(date.getSeconds()).padStart(2, '0')
-  return `${hh}:${mm}:${ss}`
-}
-
 function formatIngested(value: string | null | undefined): string {
-  if (!value) return mockData.doc.ingestedAt
+  if (!value) return 'unavailable'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString([], {
@@ -139,23 +158,6 @@ function mapStageToPipelineStatus(value: string | null | undefined): PipelineSta
   if (value === 'failed') return 'failed'
   if (value === 'not_started') return 'queued'
   return 'running'
-}
-
-function bumpKpi(kpi: RunKpi, event: ActivityEvent): RunKpi {
-  let next = { ...kpi }
-  if (event.type === 'CLAIM') {
-    next = {
-      ...next,
-      claimsTotal: next.claimsTotal + 1,
-      claimsAccepted: event.level === 'ok' ? next.claimsAccepted + 1 : next.claimsAccepted,
-      claimsDisputed:
-        event.level === 'warn' || event.level === 'bad'
-          ? next.claimsDisputed + 1
-          : next.claimsDisputed,
-    }
-  }
-  next.cacheHitRate = Math.min(0.98, Math.max(0.4, next.cacheHitRate + 0.002))
-  return next
 }
 
 function authHeaders(): HeadersInit {
@@ -363,6 +365,96 @@ function registerEntityToRow(row: RegisterRow, index: number): EntityRow {
 
 const LIST_VIEWS: ArtifactView[] = ['chronology', 'entities', 'people']
 
+function buildInitialWorkspaceData(docId: string, reviewMode: boolean): WorkspaceData {
+  const base: WorkspaceData = {
+    isRealData: false,
+    doc: { ...mockData.doc, id: docId },
+    pipelines: mockData.pipelines.map((pipe) => ({ ...pipe, statusSource: 'mock', progressSource: 'mock' })),
+    kpi: { ...runKpiSeed },
+    pass: { current: 3, max: 5 },
+    agreement: mockData.agreement,
+    artifacts: mockData.artifacts,
+    chronology: mockData.chronology.map((row) => ({ ...row, dataSource: 'mock' })),
+    entities: mockData.entities.map((row) => ({ ...row, dataSource: 'mock' })),
+    people: mockData.people.map((row) => ({ ...row, dataSource: 'mock' })),
+    conflicts: mockData.conflicts,
+    signals: mockData.signals,
+    activity: mockData.activity.map((row) => ({ ...row, dataSource: 'mock' })),
+    reports: mockData.reports,
+    summary: null,
+    augmentation: { ...mockData.augmentation, externalSourcesBySource: {} },
+    pipeline: null,
+    fleet: null,
+    hardware: mockData.hardware,
+  }
+
+  if (!reviewMode) return base
+
+  const emptyAgreement = {
+    jaccard: null,
+    gate: 0.85,
+    claims: 0,
+    accepted: 0,
+    disputed: 0,
+    superseded: 0,
+    claimsSource: 'unavailable' as const,
+    jaccardSource: 'unavailable' as const,
+  }
+
+  return {
+    ...base,
+    doc: {
+      ...base.doc,
+      id: docId,
+      title: titleFromDocId(docId),
+      pages: 0,
+      docType: 'review',
+      jurisdiction: '',
+      ingestedAt: 'unavailable',
+      elapsedHours: 0,
+    },
+    pipelines: [],
+    kpi: {
+      ...base.kpi,
+      claimsTotal: 0,
+      claimsAccepted: 0,
+      claimsDisputed: 0,
+      openConflicts: 0,
+      humanQueue: 0,
+      cacheHitRate: 0,
+      claimsTotalSource: 'unavailable',
+      claimsDisputedSource: 'unavailable',
+      openConflictsSource: 'unavailable',
+      humanQueueSource: 'unavailable',
+    },
+    pass: { current: 0, max: 0 },
+    agreement: {
+      chronology: { ...emptyAgreement },
+      entity: { ...emptyAgreement },
+      person: { ...emptyAgreement },
+    },
+    artifacts: base.artifacts.map((artifact) => ({
+      ...artifact,
+      count: artifact.kind === 'list' ? 0 : artifact.count,
+      accepted: 0,
+      disputed: 0,
+      superseded: 0,
+      agreement: null,
+      sections: artifact.kind === 'report' ? 0 : artifact.sections,
+      drafted: artifact.kind === 'report' ? 0 : artifact.drafted,
+      critiqued: artifact.kind === 'report' ? 0 : artifact.critiqued,
+      outline: [],
+    })),
+    chronology: [],
+    entities: [],
+    people: [],
+    conflicts: [],
+    signals: [],
+    activity: [],
+    reports: { exec: [], detailed: [] },
+  }
+}
+
 export interface WorkspaceState {
   docId: string
   namespace: string | null
@@ -383,38 +475,18 @@ export interface WorkspaceState {
 
 export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
   const initialRoute = parseRoute(defaultDocId)
+  const reviewMode = isReviewRoute()
   const [docId, setDocId] = useState(initialRoute.docId)
   const [namespace, setNamespace] = useState<string | null>(null)
   const [view, setView] = useState<ArtifactView>(initialRoute.view)
   const [highlight, setHighlight] = useState<string | null>(null)
   const [listFilter, setListFilter] = useState<ListStatusFilter>('all')
   const [showSources, setShowSources] = useState(false)
-  const [data, setData] = useState<WorkspaceData>(() => ({
-    isRealData: false,
-    doc: { ...mockData.doc },
-    pipelines: mockData.pipelines.map((pipe) => ({ ...pipe, statusSource: 'mock', progressSource: 'mock' })),
-    kpi: { ...runKpiSeed },
-    pass: { current: 3, max: 5 },
-    agreement: mockData.agreement,
-    artifacts: mockData.artifacts,
-    chronology: mockData.chronology.map((row) => ({ ...row, dataSource: 'mock' })),
-    entities: mockData.entities.map((row) => ({ ...row, dataSource: 'mock' })),
-    people: mockData.people.map((row) => ({ ...row, dataSource: 'mock' })),
-    conflicts: mockData.conflicts,
-    signals: mockData.signals,
-    activity: mockData.activity.map((row) => ({ ...row, dataSource: 'mock' })),
-    reports: mockData.reports,
-    summary: null,
-    augmentation: { ...mockData.augmentation, externalSourcesBySource: {} },
-    pipeline: null,
-    fleet: null,
-    hardware: mockData.hardware,
-  }))
-  const [streaming, setStreaming] = useState<{ connected: boolean; events: ActivityEvent[] }>({
-    connected: true,
+  const [data, setData] = useState<WorkspaceData>(() => buildInitialWorkspaceData(initialRoute.docId, reviewMode))
+  const [streaming] = useState<{ connected: boolean; events: ActivityEvent[] }>({
+    connected: false,
     events: [],
   })
-  const hasRealActivity = useRef(false)
 
   const selectRun = useCallback((documentId: string) => {
     setDocId(documentId)
@@ -465,6 +537,14 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [defaultDocId])
+
+  useEffect(() => {
+    if (!isReviewRoute()) return
+    const canonicalPath = viewToPath(docId, view)
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState({}, '', canonicalPath)
+    }
+  }, [docId, view])
 
   useEffect(() => {
     let cancelled = false
@@ -555,7 +635,6 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
     let cancelled = false
     const controller = new AbortController()
     const currentDocId = docId
-    hasRealActivity.current = false
     setData((prev) => ({ ...prev, activity: [] }))
     const headers = authHeaders()
     fetch(`/api/docs/${encodeURIComponent(currentDocId)}/activity`, { headers, signal: controller.signal })
@@ -564,7 +643,6 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
         if (cancelled) return
         if (!payload || payload.data_source !== 'real') return
         if (payload.document_id && payload.document_id !== currentDocId) return
-        hasRealActivity.current = true
         const realEvents = payload.events.map((e) => ({ ...e, dataSource: 'real' as const }))
         setData((prev) => ({ ...prev, activity: realEvents }))
       })
@@ -647,31 +725,6 @@ export function useWorkspace(defaultDocId = mockData.doc.id): WorkspaceState {
       .catch(() => {
         setData((prev) => ({ ...prev, fleet: null }))
       })
-  }, [])
-
-  useEffect(() => {
-    let index = 0
-    const timer = window.setInterval(() => {
-      if (hasRealActivity.current) return
-      const base = activitySeed[index % activitySeed.length]
-      index += 1
-      const next: ActivityEvent = { ...base, t: formatTime(), dataSource: 'simulated' }
-      setData((prev) => ({
-        ...prev,
-        doc: {
-          ...prev.doc,
-          elapsedHours: Math.min(prev.doc.timeBudgetHours, prev.doc.elapsedHours + 0.03),
-        },
-        kpi: bumpKpi(prev.kpi, next),
-        activity: [next, ...prev.activity].slice(0, 120),
-      }))
-      setStreaming((prev) => ({
-        connected: prev.connected,
-        events: [next, ...prev.events].slice(0, 60),
-      }))
-    }, 5000)
-
-    return () => window.clearInterval(timer)
   }, [])
 
   return useMemo(

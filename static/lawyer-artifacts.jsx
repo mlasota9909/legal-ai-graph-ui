@@ -1387,24 +1387,24 @@ function SynthesisArtifact({ docId, debugIds, status }) {
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [running, setRunning] = React.useState(false);
-  const [message, setMessage] = React.useState('Synthesis is not available in this build (mock).');
+  const [message, setMessage] = React.useState('ZZ_DUMMY_SYNTHESIS_PANEL - synthesis is not available in this build.');
 
   const load = React.useCallback(() => {
     if (!docId) return;
     setLoading(true);
     setData(null);
-    setMessage('Synthesis is not available in this build (mock).');
+    setMessage('ZZ_DUMMY_SYNTHESIS_PANEL - synthesis is not available in this build.');
     setLoading(false);
   }, [docId]);
 
   React.useEffect(() => {
     setData(null);
-    setMessage('Synthesis is not available in this build (mock).');
+    setMessage('ZZ_DUMMY_SYNTHESIS_PANEL - synthesis is not available in this build.');
     load();
   }, [load]);
 
   const run = async () => {
-    setMessage('Synthesis is not available in this build (mock).');
+    setMessage('ZZ_DUMMY_SYNTHESIS_PANEL - synthesis is not available in this build.');
   };
 
   const sections = data && Array.isArray(data.sections) ? data.sections : [];
@@ -1441,7 +1441,7 @@ function SynthesisArtifact({ docId, debugIds, status }) {
     >
       <div className="lwa-frame-h">
         <div className="left">
-          <div className="lwa-eyebrow">Artifact 6 of 8 · synthesis · <span className="lwa-badge candidate">mock</span></div>
+          <div className="lwa-eyebrow">Artifact 6 of 8 · synthesis · <span className="lwa-badge candidate">ZZ_DUMMY_MOCK</span></div>
           <h2 className="lwa-title">Synthesis</h2>
           <div className="lwa-sub">
             {loading ? 'Loading...' : data ? `${narrativeSections.length} narrative sections · ${claims.length} key events and ${entities.length} key persons.` : (message || 'No synthesis run yet - click Run Synthesis')}

@@ -406,5 +406,24 @@ window.LawyerData = (() => {
     ],
   };
 
-  return { matters, documentRefs, externalRefs, suggestedPrompts, chatHistory, memo, detailedMemo };
+  const safeUnprefixedKeys = new Set([
+    'id', 'folderId', 'parentId', 'status', 'state', 'kind', 'artifact', 'who', 't',
+    'url', 'opened', 'ingested', 'analysed', 'drafted', 'viewedAt', 'uploadTs',
+    'primary', 'pinned', 'verified', 'year',
+  ]);
+
+  function markDummy(value, key) {
+    if (Array.isArray(value)) return value.map((item) => markDummy(item, key));
+    if (value && typeof value === 'object') {
+      const next = {};
+      Object.keys(value).forEach((itemKey) => {
+        next[itemKey] = markDummy(value[itemKey], itemKey);
+      });
+      return next;
+    }
+    if (typeof value !== 'string' || value === '' || safeUnprefixedKeys.has(key)) return value;
+    return value.startsWith('ZZ_DUMMY_') ? value : `ZZ_DUMMY_${value}`;
+  }
+
+  return markDummy({ matters, documentRefs, externalRefs, suggestedPrompts, chatHistory, memo, detailedMemo });
 })();

@@ -36,6 +36,11 @@ function sourceCountKind(value: number | null): DataSource {
   return value == null ? 'unavailable' : 'real'
 }
 
+function reviewHref(docId: string, view?: 'chronology' | 'evidence' | 'ask'): string {
+  const base = `/runs/${encodeURIComponent(docId)}`
+  return view ? `${base}/${view}` : base
+}
+
 function DocumentPicker({ activeId, title }: { activeId: string; title: string }) {
   const nav = useNav()
   const selectRun = nav?.selectRun
@@ -260,9 +265,11 @@ function ActivityLog({ data }: { data: WorkspaceData }) {
     <div className="rounded-lg border border-[var(--rule)] bg-[var(--panel)]">
       <div className="flex items-center justify-between border-b border-[var(--rule)] bg-[var(--panel-dim)] px-4 py-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--ink-2)]">
-          Activity log - live
+          Activity log - real events
         </h3>
-        <div className="font-mono text-[10.5px] text-[var(--ink-3)]">streaming - last 1m: 47 events</div>
+        <div className="font-mono text-[10.5px] text-[var(--ink-3)]">
+          {rows.length === 0 ? 'No real activity events yet' : `${rows.length} real event${rows.length === 1 ? '' : 's'}`}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1 border-b border-[var(--rule)] bg-[var(--panel-dim)] px-2 pt-2">
         {ACTIVITY_FILTERS.map((f) => (
@@ -287,6 +294,11 @@ function ActivityLog({ data }: { data: WorkspaceData }) {
         ))}
       </div>
       <div className="max-h-[440px] overflow-y-auto font-mono text-[11.5px]">
+        {rows.length === 0 && (
+          <div className="border-b border-[var(--rule-soft)] px-4 py-5 text-[var(--ink-3)]">
+            No real activity events yet
+          </div>
+        )}
         {rows.map((row, idx) => {
           const target = activityTarget(row)
           const clickable = Boolean(target && nav)
@@ -357,6 +369,7 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
   const loadedCount = isListArtifactId(artifact.id) ? loadedListCount(data, artifact.id) : 0
   const runTotal = artifact.count ?? artifact.sections ?? 0
   const meterTotal = isReport ? runTotal : loadedCount || runTotal
+  const safeMeterTotal = Math.max(1, meterTotal)
   const accepted = artifact.accepted ?? 0
   const disputed = artifact.disputed ?? 0
   const superseded = artifact.superseded ?? 0
@@ -447,9 +460,9 @@ function ArtifactCard({ artifact, data }: { artifact: ArtifactSummary; data: Wor
         )}
         {!isReport && (
           <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-[var(--rule-soft)]">
-            <div className="h-full bg-[var(--good)]" style={{ width: `${(accepted / meterTotal) * 100}%` }} />
-            <div className="h-full bg-[var(--warn)]" style={{ width: `${(disputed / meterTotal) * 100}%` }} />
-            <div className="h-full bg-[var(--ink-4)]" style={{ width: `${(superseded / meterTotal) * 100}%` }} />
+            <div className="h-full bg-[var(--good)]" style={{ width: `${(accepted / safeMeterTotal) * 100}%` }} />
+            <div className="h-full bg-[var(--warn)]" style={{ width: `${(disputed / safeMeterTotal) * 100}%` }} />
+            <div className="h-full bg-[var(--ink-4)]" style={{ width: `${(superseded / safeMeterTotal) * 100}%` }} />
           </div>
         )}
       </div>
@@ -537,7 +550,7 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
   return (
     <div className="theme-lattice min-h-screen bg-[var(--bg)] text-[var(--ink)]">
       <div className="flex flex-wrap border-b border-[var(--rule)] bg-[var(--panel)]">
-        <div className="flex min-w-[208px] items-center gap-3 border-r border-[var(--rule)] px-4 py-3 font-semibold">
+        <div className="flex min-w-[320px] flex-wrap items-center gap-2 border-r border-[var(--rule)] px-4 py-3 font-semibold">
           <div className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--accent)] to-[var(--lane-b)] text-[10px] font-bold uppercase text-white">
             LA
           </div>
@@ -553,13 +566,50 @@ export function LatticeDashboard({ data }: LatticeDashboardProps) {
           >
             Sources<SourceDot source="real" show />
           </button>
-          <button
-            type="button"
-            onClick={() => nav?.go('evidence')}
+          <a
+            href={reviewHref(data.doc.id)}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('monitor')
+            }}
             className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
           >
-            GraphRAG →
-          </button>
+            Operator review
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'chronology')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('chronology')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Lawyer review
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'evidence')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('evidence')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Evidence graph
+          </a>
+          <a
+            href={reviewHref(data.doc.id, 'ask')}
+            onClick={(event) => {
+              if (!nav) return
+              event.preventDefault()
+              nav.go('ask')
+            }}
+            className="rounded border border-[var(--rule)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+          >
+            Ask
+          </a>
         </div>
         <div className="flex min-w-[220px] flex-1 flex-col justify-center border-r border-[var(--rule)] px-4 py-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-3)]">Active run</div>

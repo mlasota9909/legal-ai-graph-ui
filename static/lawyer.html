@@ -141,7 +141,7 @@
         return () => { cancelled = true; };
       }, [effectiveDocId]);
 
-      // Load real matters from the API; fall back to mock data on error
+      // Load real matters from the API; any fallback data is ZZ_DUMMY-labelled.
       React.useEffect(() => {
         fetch('/api/matters', { headers: apiAuthHeaders() })
           .then(r => r.ok ? r.json() : null)

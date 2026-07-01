@@ -264,6 +264,33 @@ async function mockEvidencePanelDocument(
     })
   })
 
+  await page.route('**/api/packs', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data_source: 'real',
+        packs: [
+          {
+            pack_id: docId,
+            name: statusDoc.label,
+            document_ids: [docId],
+            namespaces: namespace ? [namespace] : [],
+            counts: {
+              documents: 1,
+              claims_total: 0,
+              entities_total: 0,
+              persons_total: 0,
+              events_total: 0,
+            },
+            data_source: 'real',
+            counts_data_source: 'real',
+          },
+        ],
+      }),
+    })
+  })
+
   await page.route(`**/api/status/${docId}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -1222,6 +1249,81 @@ async function mockStaticLawyerMatter(page: Page, docId = 'static_export_doc') {
     })
   })
 }
+
+test('canonical review route normalizes uploaded Hopper run id and exposes review links', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'hopper',
+    namespace: 'mdoc20260621_hopper',
+  })
+
+  await page.goto('/runs/ui-original_hca_hopper_v_vic-20260701T054753Z-01')
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${docId}$`))
+  await expect(page.getByRole('link', { name: 'Operator review' })).toHaveAttribute('href', `/runs/${docId}`)
+  await expect(page.getByRole('link', { name: 'Lawyer review' })).toHaveAttribute(
+    'href',
+    `/runs/${docId}/chronology`
+  )
+  await expect(page.getByRole('link', { name: 'Evidence graph' })).toHaveAttribute(
+    'href',
+    `/runs/${docId}/evidence`
+  )
+  await expect(page.getByRole('link', { name: 'Ask' })).toHaveAttribute('href', `/runs/${docId}/ask`)
+
+  const bodyText = await page.locator('body').innerText()
+  expect(bodyText).not.toContain(MOCK_TITLE)
+  expect(bodyText).not.toContain('Smith Holdings')
+})
+
+test('canonical review activity stays empty when no real activity exists', async ({ page }) => {
+  const docId = await mockEvidencePanelDocument(page, {
+    docId: 'hopper',
+    namespace: 'mdoc20260621_hopper',
+  })
+
+  await page.goto(`/runs/${docId}`)
+
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+  await page.waitForTimeout(5500)
+  await expect(page.getByText('No real activity events yet').first()).toBeVisible()
+  const activityPanel = page
+    .getByRole('heading', { name: 'Activity log - real events' })
+    .locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]')
+  await expect(activityPanel.locator('[title="simulated data"]')).toHaveCount(0)
+  await expect(page.getByText(/ZZ_DUMMY_ACTIVITY_/)).toHaveCount(0)
+})
+
+test('legacy static review pages are labelled and link back to canonical routes', async ({ page }) => {
+  await serveStaticJsxAsRaw(page)
+  await mockStaticOperatorApi(page, { docId: 'static_operator_doc' })
+
+  await page.goto(`${STATIC_OPERATOR_URL}#doc=static_operator_doc`)
+  await expect(page.getByText('LEGACY STATIC VIEW - use canonical review route for live review')).toBeVisible({
+    timeout: 15000,
+  })
+  await expect(page.getByRole('link', { name: 'Open canonical operator review' })).toHaveAttribute(
+    'href',
+    '/runs/static_operator_doc'
+  )
+  await expect(page.getByRole('link', { name: 'Open canonical lawyer review' })).toHaveAttribute(
+    'href',
+    '/runs/static_operator_doc/chronology'
+  )
+
+  await mockStaticLawyerMatter(page, 'static_lawyer_doc')
+  await page.goto(`${STATIC_LAWYER_URL}#doc=static_lawyer_doc`)
+  await expect(page.getByText('LEGACY STATIC VIEW - use canonical review route for live review')).toBeVisible({
+    timeout: 15000,
+  })
+  await expect(page.getByRole('link', { name: 'Open canonical lawyer review' })).toHaveAttribute(
+    'href',
+    '/runs/static_lawyer_doc/chronology'
+  )
+  await expect(page.getByRole('link', { name: 'Open canonical operator review' })).toHaveAttribute(
+    'href',
+    '/runs/static_lawyer_doc'
+  )
+})
 
 async function waitForStaticLawyerMatterList(page: Page): Promise<number> {
   await page.waitForFunction(() => {
